@@ -27,19 +27,12 @@ library(knitr)
 # export OUT_DIR="/u/home/c/clarefmc/projects/abcd-projs/dissertation/study1/outputs"
 # quarto render 05_slides.qmd
 
-# Output path detection — mirrors 03/04 scripts
-root <- Sys.getenv("HOME_DIR")
-if (!nzchar(root)) {
-  root <- Sys.getenv("HOME")
-}
-
+# Output path detection.
+# On HPC: OUT_DIR env var points to the absolute outputs directory.
+# Locally: use a path relative to this QMD file (scripts/ → ../outputs/).
 out_base <- Sys.getenv("OUT_DIR")
 if (!nzchar(out_base)) {
-  out_base <- file.path(
-    root,
-    "Library/CloudStorage/Box-Box/everything/projects/abcd-projs",
-    "dissertation/study1/outputs"
-  )
+  out_base <- file.path("..", "outputs")
 }
 gamm_dir  <- file.path(out_base, "gamm")
 lpa_dir   <- file.path(out_base, "lpa")
@@ -47,20 +40,20 @@ psych_dir <- file.path(out_base, "psychometrics")
 reg_dir   <- file.path(out_base, "regression")
 ds_names <- c("female_parent", "female_youth", "male_parent", "male_youth")
 
+safe_read <- function(path) {
+  if (!file.exists(path) || file.size(path) == 0) return(NULL)
+  tryCatch(read.csv(path), error = function(e) NULL)
+}
+
 # Load timing/tempo summaries for sample size tables
 tt_list <- lapply(ds_names, function(ds) {
-  p <- file.path(gamm_dir, paste0(ds, "_timing_tempo.csv"))
-  if (file.exists(p)) read.csv(p) else NULL
+  safe_read(file.path(gamm_dir, paste0(ds, "_timing_tempo.csv")))
 })
 names(tt_list) <- ds_names
 
 # Load LPA best-solutions summary if available
 lpa_summary_path <- file.path(lpa_dir, "lpa_best_solutions_summary.csv")
-lpa_summary <- if (file.exists(lpa_summary_path)) {
-  read.csv(lpa_summary_path)
-} else {
-  NULL
-}
+lpa_summary <- safe_read(lpa_summary_path)
 
 # Helper: display image or placeholder text
 img <- function(path, width = "90%") {
@@ -93,14 +86,14 @@ Motivate why we need to separate timing from tempo. Most prior work uses cross-s
    - Separates *when* puberty occurs from *how fast* it progresses — without a two-stage approach
 
 2. **Extract individual-level timing & tempo** estimates for each participant
-   - **Timing**: age at which each person's fitted trajectory first crosses PDS = 3.0
-   - **Peak velocity**: steepest rate of change — max d(PDS)/d(age) over the age range
-   - **Tempo at onset**: growth rate at the moment puberty begins
+   - **Timing deviation**: years earlier/later than cohort mean onset (PDS = 2.5 threshold)
+   - **Acceleration at onset**: d²(PDS)/d(age²) at the onset point — how rapidly the growth rate is changing when puberty begins
+   - **Peak velocity**: max d(PDS)/d(age) — retained for reference
 
 3. **Identify latent pubertal profiles** via Latent Profile Analysis
-   - Cluster on timing, peak velocity, and tempo at onset (z-scored within sample)
-   - `tidyLPA`/mclust: K = 1–6 profiles × 4 covariance structures
-   - Model selection by BIC + entropy (class separation ≥ 0.80)
+   - Cluster on timing deviation and acceleration at onset (z-scored within sample)
+   - `tidyLPA`/mclust: K = 1–6 profiles × 3 covariance structures (EEI, VVI, EEE)
+   - Model selection by BIC (lower = better) + entropy (class separation ≥ 0.80)
 
 4. [*Downstream: link profiles to outcomes — next script*]
 
@@ -158,8 +151,8 @@ Participants without a timing estimate never crossed the onset threshold (PDS co
 
 ```{r reg-participant-table}
 ps_path <- file.path(reg_dir, "reg_participant_summary.csv")
-if (file.exists(ps_path)) {
-  ps <- read.csv(ps_path)
+ps <- safe_read(ps_path)
+if (!is.null(ps)) {
   ps %>%
     group_by(group) %>%
     summarise(
@@ -209,8 +202,8 @@ img(file.path(reg_dir, "caregiver_switch_regression.png"))
 ::: {.column width="45%"}
 ```{r cg-summary-table}
 cg_path <- file.path(reg_dir, "caregiver_switch_summary.csv")
-if (file.exists(cg_path)) {
-  cg <- read.csv(cg_path)
+cg <- safe_read(cg_path)
+if (!is.null(cg)) {
   knitr::kable(
     cg %>%
       mutate(
@@ -235,8 +228,8 @@ Regression coinciding with a caregiver switch is expected — the new caregiver 
 
 ```{r reg-model-table}
 mod_path <- file.path(reg_dir, "reg_predictors_models.csv")
-if (file.exists(mod_path)) {
-  reg_mod <- read.csv(mod_path)
+reg_mod <- safe_read(mod_path)
+if (!is.null(reg_mod)) {
   reg_mod %>%
     filter(effect == "fixed", term != "(Intercept)") %>%
     select(group, term, estimate, conf.low, conf.high, p.value) %>%
@@ -281,8 +274,8 @@ img(file.path(psych_dir, "discrimination_heatmap.png"))
 
 ```{r cfa-fits}
 cfa_path <- file.path(psych_dir, "cfa_fit_per_wave.csv")
-if (file.exists(cfa_path)) {
-  cfa_fits <- read.csv(cfa_path)
+cfa_fits <- safe_read(cfa_path)
+if (!is.null(cfa_fits)) {
   knitr::kable(
     cfa_fits %>%
       group_by(dataset) %>%
@@ -306,14 +299,14 @@ One-factor CFA with WLSMV estimator. Fit is averaged across waves; wave-level ta
 ## Cross-Reporter Structure — Bifactor CFA
 
 - Three models compared per sex:
-  - **1-factor**: all 8 items load on one puberty factor
-  - **2-factor**: separate parent and youth factors (correlated)
-  - **Bifactor**: general puberty factor + orthogonal reporter method factors
+  - **M1 (method-only)**: reporter-specific method factors, no general trait — tests whether parent and youth are measuring the same thing at all
+  - **M2 (bifactor)**: general puberty factor + freely correlated reporter method factors — the theoretically preferred MTMM model
+  - **M3 (1-factor)**: all items load on one pooled puberty factor, no reporter distinction
 
 ```{r bifactor-table}
 bf_path <- file.path(psych_dir, "bifactor_model_comparison.csv")
-if (file.exists(bf_path)) {
-  bf <- read.csv(bf_path)
+bf <- safe_read(bf_path)
+if (!is.null(bf)) {
   knitr::kable(
     bf %>% select(sex, model, cfi.scaled, tli.scaled, rmsea.scaled, srmr) %>%
       mutate(across(where(is.numeric), ~ round(., 3))),
@@ -325,7 +318,7 @@ if (file.exists(bf_path)) {
 ```
 
 ::: {.notes}
-Omega_h from Schmid-Leiman decomposition quantifies how much variance the general factor explains relative to the method factors. High ECV + omega_h supports treating parent and youth reports as indicators of a common construct.
+M2 is the theoretically motivated model: it tests whether parent and youth items share a common puberty construct (general factor) over and above reporter-specific variance (method factors). M1 fit vs. M3 fit tells you whether reporter distinction matters at all. For females, M2 fit excellent across waves; for males, M1 consistently fit better than M3, suggesting reporter disagreement is more pronounced in male puberty measurement.
 :::
 
 ## Longitudinal Measurement Invariance
@@ -336,8 +329,8 @@ Omega_h from Schmid-Leiman decomposition quantifies how much variance the genera
 
 ```{r long-inv-table}
 li_path <- file.path(psych_dir, "longitudinal_invariance.csv")
-if (file.exists(li_path)) {
-  li <- read.csv(li_path)
+li <- safe_read(li_path)
+if (!is.null(li)) {
   knitr::kable(
     li %>%
       select(group, model, cfi.scaled, rmsea.scaled, delta_cfi) %>%
@@ -374,12 +367,13 @@ From each person's fitted trajectory $\hat{y}_i(\text{age})$:
 
 | Construct | Definition |
 |-----------|-----------|
-| **Timing** | Age at which $\hat{y}_i$ first crosses PDS = 2.0 |
-| **Peak velocity** | $\max_t \frac{d\hat{y}_i}{dt}$ — steepest rate of change |
-| **Tempo at onset** | $\frac{d\hat{y}_i}{dt}$ evaluated at the timing age |
+| **Timing** | Age at which $\hat{y}_i$ first crosses PDS = 2.5 |
+| **Timing deviation** | Timing − cohort mean timing; negative = early, positive = late |
+| **Acceleration at onset** | $\frac{d^2\hat{y}_i}{dt^2}$ at onset — how rapidly the growth rate is changing at the moment puberty begins; positive = still accelerating, negative = already decelerating |
+| **Peak velocity** | $\max_t \frac{d\hat{y}_i}{dt}$ — steepest rate of change (reference only) |
 
 ::: {.notes}
-Peak velocity captures how fast puberty progresses regardless of when it starts — the key feature of this approach vs. timing-only measures.
+Acceleration at onset is the second derivative of the individual trajectory evaluated when they first cross PDS = 2.5. Negative values are biologically meaningful — they occur when someone crosses the threshold after their peak velocity, meaning their growth rate was already slowing. This tends to happen in later developers whose S-curve peak occurs before the PDS = 2.5 threshold is reached.
 :::
 
 # Population Trajectories {background-color="#f5f5f5"}
@@ -480,7 +474,7 @@ img(file.path(gamm_dir, "female_youth_individual_trajectories.png"))
 ::::
 
 ::: {.notes}
-300 randomly sampled participants. Colour = timing tertile (red = early, blue = on-time, green = late, grey = no onset detected within observation window). Bold black = population mean. Dashed line = onset threshold (PDS = 3.0).
+300 randomly sampled participants. Colour = timing tertile (red = early, blue = on-time, green = late, grey = no onset detected within observation window). Bold black = population mean. Dashed line = onset threshold (PDS = 2.5).
 :::
 
 ## Individual Trajectories — Males
@@ -581,11 +575,11 @@ If timing and peak velocity are moderately correlated, that motivates the LPA �
 
 ## LPA Overview
 
-- **Variables**: timing, peak velocity, tempo at onset (all z-scored within sample)
+- **Variables**: timing deviation (yr from cohort mean) + acceleration at onset (d²PDS/dt²), z-scored within sample
 - **Method**: `tidyLPA` (wrapping `mclust`)
-- **Covariance structures compared**: EEI, VVI, EEE, VVV
+- **Covariance structures compared**: EEI (equal var, zero cov), VVI (varying var, zero cov), EEE (equal var + cov) — VVV excluded as overparameterized with 2 variables
 - **Profiles searched**: K = 1–6
-- **Selection criteria**: BIC (primary) + entropy (separation quality, threshold > 0.80)
+- **Selection criteria**: BIC (lower = better, primary) + entropy (> 0.80 = good separation)
 - **Six solutions**: female × {parent, youth, averaged}, male × {parent, youth, averaged}
 
 ## Model Selection — Females
@@ -698,10 +692,10 @@ if (!is.null(lpa_summary)) {
 
 ::: {.incremental}
 - Factor-smooth GAMMs recover individual pubertal trajectories from longitudinal PDS data
-- Timing and peak velocity show substantial individual variation and are [moderately / weakly] correlated
-- LPA identifies [K] distinct pubertal profiles that differ in both *when* and *how fast* puberty unfolds
-- Reporter convergence: parent and youth solutions [converge / diverge] in...
-- Next: link profile membership to [outcomes]
+- Timing deviation and acceleration at onset are **negatively correlated** across profiles: earlier developers are still accelerating when puberty begins; later developers have already passed peak velocity
+- LPA identifies **K = 6** distinct pubertal profiles (BIC-optimal, Model 2/VVI, entropy .87–.94) that differ on both *when* and *how fast* puberty is changing at onset — replicated across all six sex × reporter solutions
+- Cross-reporter structure: both parent and youth load on a common puberty factor (M2 bifactor); reporter-specific variance present but structure is longitudinally stable (scalar ΔCFI < .001 for females; −.009 for males)
+- Next: link profile membership to outcomes
 :::
 
 ::: {.notes}

@@ -21,13 +21,15 @@ suppressPackageStartupMessages({
 
 set.seed(90025)
 
-# timing    = age at onset (first cross of PDS threshold)         [individual]
-# obs_tempo = OLS slope of observed pds_comp ~ age per person    [individual]
+# timing_dev  = timing - cohort mean timing (years; negative = early)  [individual]
+# acceleration = d²(PDS)/d(age²) at onset (PDS = 2.5): how fast the growth
+#               rate is changing at the moment puberty begins; negative values
+#               are meaningful (growth rate already decelerating at onset)  [individual]
 # Excluded:
-#   tempo / gamm_tempo — derived from the population-level GAMM smooth, so
-#     near-constant across individuals (no meaningful individual variance).
-#   peak_velocity — population smooth's peak derivative; literally one value
-#     per dataset.
+#   obs_tempo / gamm_tempo — OLS slope and GAMM random slope; both conflate
+#     overall growth rate with timing and are collinear with timing_dev.
+#   peak_velocity — max d(PDS)/d(age); near-identical across individuals once
+#     timing is accounted for.
 LPA_VARS <- c("timing_dev", "acceleration")
 N_PROFILES <- 1:6
 # tidyLPA model numbers (mclust parameterisation):
@@ -103,7 +105,7 @@ build_averaged <- function(sex) {
     return(p %>% mutate(reporter = "parent_only"))
   }
 
-  full_join(
+  joined <- full_join(
     p %>%
       select(id, all_of(LPA_VARS)) %>%
       rename_with(~ paste0(., "_p"), all_of(LPA_VARS)),
@@ -111,13 +113,18 @@ build_averaged <- function(sex) {
       select(id, all_of(LPA_VARS)) %>%
       rename_with(~ paste0(., "_y"), all_of(LPA_VARS)),
     by = "id"
-  ) %>%
-    mutate(
-      timing = rowMeans(cbind(timing_p, timing_y), na.rm = TRUE),
-      obs_tempo = rowMeans(cbind(obs_tempo_p, obs_tempo_y), na.rm = TRUE),
-      dataset = paste0(sex, "_averaged"),
-      reporter = "averaged"
-    ) %>%
+  )
+
+  # Average each LPA variable across reporters without hardcoding column names
+  for (.v in LPA_VARS) {
+    joined[[.v]] <- rowMeans(
+      cbind(joined[[paste0(.v, "_p")]], joined[[paste0(.v, "_y")]]),
+      na.rm = TRUE
+    )
+  }
+
+  joined %>%
+    mutate(dataset = paste0(sex, "_averaged"), reporter = "averaged") %>%
     select(id, dataset, reporter, all_of(LPA_VARS))
 }
 
@@ -174,6 +181,36 @@ run_lpa <- function(df, label) {
 
   if (nrow(df_cc) < 50) {
     warning("Too few complete cases for ", label, " — skipping.")
+    return(invisible(NULL))
+  }
+
+  # Exclude participants with negative OLS slope — Tanner stages do not reverse;
+  # negative values are measurement artifacts (sparse data, caregiver switches).
+  # NOTE: "acceleration" (d²PDS/dt² at onset) is intentionally excluded from
+  # this filter — negative values there are biologically meaningful (growth rate
+  # already decelerating at onset) and should not be dropped.
+  slope_var <- grep(
+    "^obs_tempo$|^ols_slope$|^tempo$",
+    LPA_VARS,
+    value = TRUE,
+    ignore.case = TRUE
+  )
+  if (length(slope_var) > 0) {
+    n_neg <- sum(df_cc[[slope_var[1]]] < 0, na.rm = TRUE)
+    if (n_neg > 0) {
+      cat(
+        "Excluding",
+        n_neg,
+        "participants with negative",
+        slope_var[1],
+        "(OLS < 0)\n"
+      )
+      df_cc <- df_cc %>% filter(.data[[slope_var[1]]] >= 0)
+    }
+  }
+
+  if (nrow(df_cc) < 50) {
+    warning("Too few cases after slope exclusion for ", label, " — skipping.")
     return(invisible(NULL))
   }
 
@@ -377,8 +414,8 @@ run_lpa <- function(df, label) {
   )
 
   var_labels <- c(
-    "Timing (age at onset, yr)",
-    "Tempo (OLS slope, PDS/yr)"
+    "Timing deviation (yr from cohort mean)",
+    "Acceleration (d²PDS/dt² at onset)"
   )
 
   # Pivot z-score means for faceted plot

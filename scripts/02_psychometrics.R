@@ -170,6 +170,33 @@ for (ds_name in names(datasets)) {
       next
     }
 
+    # Drop zero-variance items (e.g., fpete before foundation recode)
+    zero_var <- names(sub)[sapply(sub, function(x) {
+      length(unique(na.omit(x))) <= 1
+    })]
+    if (length(zero_var) > 0) {
+      message(
+        "Wave ",
+        wv,
+        " [",
+        key,
+        "]: removing zero-variance items: ",
+        paste(zero_var, collapse = ", ")
+      )
+      sub <- sub[, setdiff(names(sub), zero_var), drop = FALSE]
+      items_avail <- setdiff(items_avail, zero_var)
+      items_ord_avail <- setdiff(items_ord_avail, zero_var)
+      items_bin_avail <- setdiff(items_bin_avail, zero_var)
+      if (length(items_avail) == 0 || nrow(sub) < 100) {
+        message(
+          "Skipping ",
+          key,
+          ": no valid items after zero-variance removal"
+        )
+        next
+      }
+    }
+
     result <- list(n = nrow(sub))
 
     # --- polychoric + reliability ---
@@ -345,9 +372,292 @@ write.csv(
 )
 
 # ---------------------------------------------------------------------------
+# SECTION 1b: POOLED EFA AND RELIABILITY
+# Pooled across all waves, per sex × reporter.
+# (1) Cronbach's alpha + omega (h and total) with ECV
+# (2) Parallel analysis (fa.parallel on polychoric R) to determine factor count
+# (3) EFA 1- and 2-factor solutions (oblimin rotation for 2+)
+# Outputs: reliability_summary.csv, efa_loadings.csv, parallel_analysis_plot.png
+# ---------------------------------------------------------------------------
+
+efa_results <- list()
+
+for (ds_name in names(datasets)) {
+  ds <- datasets[[ds_name]]
+  df <- ds$df
+  items_bin <- ds$binary
+  items_ord <- setdiff(ds$items, items_bin)
+
+  # Pool all waves; apply same validity filters as per-wave loop
+  sub_raw <- df %>%
+    select(any_of(ds$items)) %>%
+    mutate(across(everything(), as.integer))
+
+  sub <- sub_raw %>%
+    filter(if_all(all_of(items_ord), ~ !is.na(.) & . %in% 1:4))
+  if (length(items_bin) > 0) {
+    sub <- sub %>% filter(if_all(all_of(items_bin), ~ !is.na(.) & . %in% 1:2))
+  }
+  sub <- select(sub, all_of(ds$items))
+
+  cat("\n\n=== EFA / Reliability:", ds_name, "| n =", nrow(sub), "===\n")
+
+  if (nrow(sub) < 200) {
+    message("Insufficient data for ", ds_name, " — skipping.")
+    next
+  }
+
+  # Polychoric correlation matrix (basis for all analyses below)
+  pc <- tryCatch(
+    psych::polychoric(sub, na.rm = TRUE, correct = 0),
+    error = function(e) {
+      message("polychoric failed: ", e$message)
+      NULL
+    }
+  )
+  if (is.null(pc)) {
+    next
+  }
+
+  # --- Reliability ---
+  alpha_res <- tryCatch(
+    psych::alpha(sub, na.rm = TRUE, check.keys = TRUE),
+    error = function(e) NULL
+  )
+  # omega requires >= 2 factors; nfactors=2 is standard for hierarchical omega
+  omega_res <- tryCatch(
+    psych::omega(pc$rho, nfactors = 2, fm = "minres", plot = FALSE, sl = TRUE),
+    error = function(e) {
+      message("omega failed: ", e$message)
+      NULL
+    }
+  )
+
+  cat(
+    "Alpha  :",
+    if (!is.null(alpha_res)) round(alpha_res$total$raw_alpha, 3) else NA,
+    "\n"
+  )
+  if (!is.null(omega_res)) {
+    cat("Omega_h:", round(omega_res$omega_h, 3), "  (general factor only)\n")
+    cat("Omega_t:", round(omega_res$omega.tot, 3), "  (total reliability)\n")
+    cat(
+      "ECV    :",
+      round(omega_res$ECV, 3),
+      "  (explained common variance by g)\n"
+    )
+  }
+
+  # --- Parallel analysis ---
+  cat("\n--- Parallel analysis ---\n")
+  pa <- tryCatch(
+    psych::fa.parallel(
+      pc$rho,
+      n.obs = nrow(sub),
+      fm = "minres",
+      fa = "fa",
+      plot = FALSE
+    ),
+    error = function(e) {
+      message("fa.parallel failed: ", e$message)
+      NULL
+    }
+  )
+  if (!is.null(pa)) {
+    cat("Suggested factors:", pa$nfact, "\n")
+    cat("Actual eigenvalues    :", round(pa$fa.values, 3), "\n")
+    cat(
+      "Simulated eigenvalues :",
+      round(pa$fa.sim[seq_along(pa$fa.values)], 3),
+      "\n"
+    )
+  }
+
+  # --- EFA 1-factor ---
+  efa1 <- tryCatch(
+    psych::fa(sub, nfactors = 1, fm = "minres", rotate = "none", cor = "poly"),
+    error = function(e) NULL
+  )
+  # --- EFA 2-factor (oblimin allows factors to correlate) ---
+  efa2 <- tryCatch(
+    psych::fa(
+      sub,
+      nfactors = 2,
+      fm = "minres",
+      rotate = "oblimin",
+      cor = "poly"
+    ),
+    error = function(e) NULL
+  )
+
+  cat("\n--- 1-factor EFA loadings ---\n")
+  if (!is.null(efa1)) {
+    print(efa1$loadings, cutoff = 0.1)
+    cat(
+      "RMSEA:",
+      round(efa1$RMSEA[1], 3),
+      "| TLI:",
+      round(efa1$TLI, 3),
+      "| RMSR:",
+      round(efa1$rms, 3),
+      "\n"
+    )
+  }
+  cat("\n--- 2-factor EFA loadings (oblimin) ---\n")
+  if (!is.null(efa2)) {
+    print(efa2$loadings, cutoff = 0.1)
+    cat(
+      "RMSEA:",
+      round(efa2$RMSEA[1], 3),
+      "| TLI:",
+      round(efa2$TLI, 3),
+      "| RMSR:",
+      round(efa2$rms, 3),
+      "\n"
+    )
+    if (!is.null(efa2$Phi)) {
+      cat("Factor correlation (phi):", round(efa2$Phi[1, 2], 3), "\n")
+    }
+  }
+
+  efa_results[[ds_name]] <- list(
+    n = nrow(sub),
+    alpha = alpha_res,
+    omega = omega_res,
+    parallel = pa,
+    efa1 = efa1,
+    efa2 = efa2
+  )
+}
+
+# --- Reliability summary table ---
+rel_rows <- lapply(names(efa_results), function(nm) {
+  r <- efa_results[[nm]]
+  data.frame(
+    dataset = nm,
+    n = r$n,
+    alpha = if (!is.null(r$alpha)) round(r$alpha$total$raw_alpha, 3) else NA,
+    omega_h = if (!is.null(r$omega)) round(r$omega$omega_h, 3) else NA,
+    omega_t = if (!is.null(r$omega)) round(r$omega$omega.tot, 3) else NA,
+    ecv = if (!is.null(r$omega)) round(r$omega$ECV, 3) else NA,
+    n_factors_parallel = if (!is.null(r$parallel)) r$parallel$nfact else NA,
+    stringsAsFactors = FALSE
+  )
+})
+rel_table <- bind_rows(rel_rows)
+cat("\n=== Reliability summary ===\n")
+print(rel_table)
+write.csv(
+  rel_table,
+  file.path(out_dir, "reliability_summary.csv"),
+  row.names = FALSE
+)
+
+# --- EFA loadings summary table ---
+make_loadings_df <- function(efa_obj, n_factors, dataset) {
+  if (is.null(efa_obj)) {
+    return(NULL)
+  }
+  L <- as.data.frame(unclass(efa_obj$loadings))
+  L$item <- rownames(L)
+  L$dataset <- dataset
+  L$n_factors <- n_factors
+  L$rmsea <- round(efa_obj$RMSEA[1], 3)
+  L$tli <- round(efa_obj$TLI, 3)
+  L$rmsr <- round(efa_obj$rms, 3)
+  L
+}
+
+loadings_table <- lapply(names(efa_results), function(nm) {
+  r <- efa_results[[nm]]
+  bind_rows(
+    make_loadings_df(r$efa1, 1, nm),
+    make_loadings_df(r$efa2, 2, nm)
+  )
+}) %>%
+  bind_rows()
+
+write.csv(
+  loadings_table,
+  file.path(out_dir, "efa_loadings.csv"),
+  row.names = FALSE
+)
+cat("\nEFA loadings written to:", file.path(out_dir, "efa_loadings.csv"), "\n")
+
+# --- Parallel analysis scree plot ---
+pa_plot_df <- lapply(names(efa_results), function(nm) {
+  pa <- efa_results[[nm]]$parallel
+  if (is.null(pa)) {
+    return(NULL)
+  }
+  n_ev <- length(pa$fa.values)
+  data.frame(
+    dataset = nm,
+    factor = seq_len(n_ev),
+    actual = pa$fa.values,
+    simulated = pa$fa.sim[seq_len(n_ev)],
+    stringsAsFactors = FALSE
+  )
+}) %>%
+  bind_rows()
+
+if (nrow(pa_plot_df) > 0) {
+  pa_long <- pa_plot_df %>%
+    tidyr::pivot_longer(
+      c(actual, simulated),
+      names_to = "type",
+      values_to = "eigenvalue"
+    ) %>%
+    mutate(
+      dataset_label = dplyr::recode(
+        dataset,
+        female_parent = "Female parent",
+        female_youth = "Female youth",
+        male_parent = "Male parent",
+        male_youth = "Male youth"
+      )
+    )
+
+  p_pa <- ggplot(
+    pa_long,
+    aes(x = factor(factor), y = eigenvalue, colour = type, group = type)
+  ) +
+    geom_line(linewidth = 1.1) +
+    geom_point(size = 2.8) +
+    geom_hline(yintercept = 0, linetype = "dashed", colour = "grey60") +
+    scale_colour_manual(
+      values = c(actual = "#2166ac", simulated = "#d73027"),
+      labels = c(actual = "Actual", simulated = "Simulated (parallel)")
+    ) +
+    facet_wrap(~dataset_label, nrow = 1) +
+    labs(
+      title = "Parallel analysis — factor retention",
+      subtitle = "Retain factors where actual eigenvalue > simulated",
+      x = "Factor",
+      y = "Eigenvalue",
+      colour = NULL
+    ) +
+    theme_minimal(base_size = 14) +
+    theme(
+      legend.position = "bottom",
+      strip.text = element_text(size = 11, face = "bold"),
+      plot.subtitle = element_text(colour = "grey45", size = 11)
+    )
+
+  ggsave(
+    file.path(out_dir, "parallel_analysis_plot.png"),
+    p_pa,
+    width = 12,
+    height = 4.5,
+    dpi = 180
+  )
+  cat("\nParallel analysis plot written.\n")
+}
+
+# ---------------------------------------------------------------------------
 # SECTION 2: CROSS-REPORTER BIFACTOR CFA
-# Pooled across waves. Per sex.
-# Tests whether a general puberty factor + reporter method factors
+# One randomly selected wave per participant (preserves independence).
+# Per sex. Tests whether a general puberty factor + reporter method factors
 # fits better than two separate reporter factors.
 # ---------------------------------------------------------------------------
 
@@ -365,10 +675,13 @@ build_cr_data <- function(parent_df, youth_df, include_pete = FALSE) {
     rename_with(~ paste0(., "_y"), any_of(all_items))
 
   inner_join(parent_sel, youth_sel, by = c("id", "wave")) %>%
-    select(-id, -wave) %>%
-    mutate(across(everything(), as.integer)) %>%
-    # binary pete (1/2) passes %in% 1:4, so no special case needed here
-    filter(if_all(everything(), ~ !is.na(.) & . %in% 1:4))
+    mutate(across(-c(id, wave), as.integer)) %>%
+    filter(if_all(-c(id, wave), ~ !is.na(.) & . %in% 1:4)) %>%
+    # one randomly selected wave per participant → independent observations
+    group_by(id) %>%
+    slice_sample(n = 1) %>%
+    ungroup() %>%
+    select(-id, -wave)
 }
 
 run_bifactor_section <- function(
@@ -428,77 +741,6 @@ run_bifactor_section <- function(
   cr_items_p <- grep("_p$", cr_items, value = TRUE)
   cr_items_y <- grep("_y$", cr_items, value = TRUE)
 
-  # Model 1: no puberty trait, freely correlated method factors
-  # Items cluster only by reporter; no shared latent construct.
-  mod_m1 <- paste0(
-    "method_p =~ ",
-    paste(cr_items_p, collapse = " + "),
-    "\n",
-    "method_y =~ ",
-    paste(cr_items_y, collapse = " + ")
-  )
-  fit_m1 <- tryCatch(
-    lavaan::cfa(
-      mod_m1,
-      data = dat,
-      ordered = cr_items,
-      estimator = "WLSMV",
-      missing = "pairwise"
-    ),
-    error = function(e) {
-      message("Model 1 (no trait) failed: ", e$message)
-      NULL
-    }
-  )
-
-  # Model 2: puberty trait + freely correlated method factors
-  # General factor ⊥ each method factor (bifactor constraint); method factors
-  # are free to correlate with each other — parses shared vs. reporter-unique variance.
-  mod_m2 <- paste0(
-    "general  =~ ",
-    paste(cr_items, collapse = " + "),
-    "\n",
-    "method_p =~ ",
-    paste(cr_items_p, collapse = " + "),
-    "\n",
-    "method_y =~ ",
-    paste(cr_items_y, collapse = " + "),
-    "\n",
-    "general ~~ 0*method_p\n",
-    "general ~~ 0*method_y"
-  )
-  fit_m2 <- tryCatch(
-    lavaan::cfa(
-      mod_m2,
-      data = dat,
-      ordered = cr_items,
-      estimator = "WLSMV",
-      missing = "pairwise"
-    ),
-    error = function(e) {
-      message("Model 2 (trait + free methods) failed: ", e$message)
-      NULL
-    }
-  )
-
-  # Model 3: puberty trait, perfectly correlated methods (single factor)
-  # Method factors contribute no unique variance beyond the trait.
-  mod_m3 <- paste("pub =~", paste(cr_items, collapse = " + "))
-  fit_m3 <- tryCatch(
-    lavaan::cfa(
-      mod_m3,
-      data = dat,
-      ordered = cr_items,
-      estimator = "WLSMV",
-      missing = "pairwise"
-    ),
-    error = function(e) {
-      message("Model 3 (trait only) failed: ", e$message)
-      NULL
-    }
-  )
-
-  # fit comparison table
   fi_names <- c(
     "cfi.scaled",
     "tli.scaled",
@@ -507,13 +749,113 @@ run_bifactor_section <- function(
     "chisq.scaled",
     "df.scaled"
   )
+
+  safe_cfa <- function(mod, label, theta = FALSE) {
+    tryCatch(
+      withCallingHandlers(
+        lavaan::cfa(
+          mod,
+          data = dat,
+          ordered = cr_items,
+          estimator = "WLSMV",
+          parameterization = if (theta) "theta" else "delta",
+          missing = "pairwise"
+        ),
+        warning = function(w) {
+          message(label, " warning [", sex_label, "]: ", conditionMessage(w))
+          invokeRestart("muffleWarning")
+        }
+      ),
+      error = function(e) {
+        message(label, " failed [", sex_label, "]: ", e$message)
+        NULL
+      }
+    )
+  }
+
+  # Model 1: single puberty factor (no method effects).
+  # Baseline — reporters interchangeable; no systematic reporter variance.
+  mod_m1 <- paste("puberty =~", paste(cr_items, collapse = " + "))
+  fit_m1 <- safe_cfa(mod_m1, "M1 (single factor)")
+
+  # Model 2: correlated reporter factors, no general trait.
+  # reporter_p and reporter_y as separate latent variables, freely correlated.
+  # Quantifies latent cross-reporter agreement without imposing a shared construct.
+  mod_m2 <- paste0(
+    "reporter_p =~ ",
+    paste(cr_items_p, collapse = " + "),
+    "\n",
+    "reporter_y =~ ",
+    paste(cr_items_y, collapse = " + ")
+  )
+  fit_m2 <- safe_cfa(mod_m2, "M2 (correlated reporters)")
+
+  # Model 3: single puberty factor + within-reporter correlated uniqueness.
+  # Residuals of same-reporter items are allowed to covary (reporter-specific
+  # variance beyond the general factor). CU is within-reporter only — this is
+  # identifiable and does not conflict with the general factor.
+  cu_within <- c(
+    apply(combn(cr_items_p, 2), 2, function(x) paste0(x[1], " ~~ ", x[2])),
+    apply(combn(cr_items_y, 2), 2, function(x) paste0(x[1], " ~~ ", x[2]))
+  )
+  mod_m3 <- paste0(
+    "puberty =~ ",
+    paste(cr_items, collapse = " + "),
+    "\n",
+    paste(cu_within, collapse = "\n")
+  )
+  # theta parameterization frees residual variances — more stable for complex
+  # models with many CU parameters (avoids near-singular information matrices)
+  fit_m3 <- safe_cfa(
+    mod_m3,
+    "M3 (single factor + within-reporter CU)",
+    theta = TRUE
+  )
+  fit_m3_diag <- fit_m3 # keep raw fit for diagnostics before nulling
+  if (!is.null(fit_m3) && !isTRUE(lavaan::lavInspect(fit_m3, "converged"))) {
+    message("M3 did not converge [", sex_label, "] — excluded from fit table")
+    fit_m3 <- NULL
+  }
+
+  # Model 4: single puberty factor + cross-reporter CU (matched items).
+  # The residuals of the *same item* rated by parent and youth are allowed to
+  # correlate — item-level convergence beyond the shared trait (CU-MTMM).
+  # Match by stripping suffix so peta_p pairs with peta_y regardless of order.
+  base_p <- sub("_p$", "", cr_items_p)
+  base_y <- sub("_y$", "", cr_items_y)
+  matched <- intersect(base_p, base_y)
+  cu_cross <- paste0(matched, "_p ~~ ", matched, "_y")
+  cat(
+    "\nM4 cross-reporter CU pairs [",
+    sex_label,
+    "]:\n",
+    paste(cu_cross, collapse = "\n"),
+    "\n"
+  )
+  mod_m4 <- paste0(
+    "puberty =~ ",
+    paste(cr_items, collapse = " + "),
+    "\n",
+    paste(cu_cross, collapse = "\n")
+  )
+  fit_m4 <- safe_cfa(mod_m4, "M4 (single factor + cross-reporter CU)")
+  if (!is.null(fit_m4) && !isTRUE(lavaan::lavInspect(fit_m4, "converged"))) {
+    message("M4 did not converge [", sex_label, "] — excluded")
+    fit_m4 <- NULL
+  }
+
+  # Always show all 4 models; failed models appear as NA rows
+  na_row <- as.data.frame(
+    setNames(as.list(rep(NA_real_, length(fi_names))), fi_names)
+  )
   fit_table <- lapply(
     list(
-      `m1_no_trait` = fit_m1,
-      `m2_trait_free_meth` = fit_m2,
-      `m3_trait_only` = fit_m3
+      m1_single_factor = fit_m1,
+      m2_corr_reporters = fit_m2,
+      m3_cu_within = fit_m3,
+      m4_cu_cross = fit_m4
     ),
-    function(fit) fit_to_row(fit, fi_names)
+    function(fit) if (!is.null(fit)) fit_to_row(fit, fi_names) else na_row
   ) %>%
     bind_rows(.id = "model") %>%
     mutate(sex = sex_label)
@@ -521,12 +863,246 @@ run_bifactor_section <- function(
   cat("\n--- Model fit comparison ---\n")
   print(fit_table)
 
+  # --- Diagnostics: MIs + Heywood check for all models ---------------------
+  diagnose_fit <- function(fit, label) {
+    cat("\n>>> Diagnostics:", label, "[", sex_label, "] <<<\n")
+
+    if (is.null(fit)) {
+      cat("  Model did not converge or failed — no fit object available.\n")
+      return(invisible(NULL))
+    }
+
+    converged <- isTRUE(lavaan::lavInspect(fit, "converged"))
+    cat("  Converged:", converged, "\n")
+
+    # Heywood check: residual variances < 0 or standardised loading > 1
+    pe <- tryCatch(
+      lavaan::parameterEstimates(fit, standardized = TRUE),
+      error = function(e) NULL
+    )
+    if (!is.null(pe)) {
+      resid_neg <- pe[
+        pe$op == "~~" & pe$lhs == pe$rhs & pe$est < 0,
+        c("lhs", "est", "std.all")
+      ]
+      load_high <- pe[
+        pe$op == "=~" & !is.na(pe$std.all) & abs(pe$std.all) > 1,
+        c("lhs", "rhs", "est", "std.all")
+      ]
+      if (nrow(resid_neg) > 0) {
+        cat("  Heywood: negative residual variances:\n")
+        print(resid_neg, row.names = FALSE)
+      }
+      if (nrow(load_high) > 0) {
+        cat("  Heywood: |standardized loading| > 1:\n")
+        print(load_high, row.names = FALSE)
+      }
+      if (nrow(resid_neg) == 0 && nrow(load_high) == 0) {
+        cat("  No Heywood cases detected.\n")
+      }
+    }
+
+    # Modification indices (top 15 by MI value, all ops)
+    mi <- tryCatch(
+      lavaan::modindices(
+        fit,
+        sort. = TRUE,
+        maximum.number = 15,
+        op = c("=~", "~~")
+      ),
+      error = function(e) {
+        cat("  modindices() failed:", e$message, "\n")
+        NULL
+      }
+    )
+    if (!is.null(mi) && nrow(mi) > 0) {
+      cat("  Top modification indices:\n")
+      print(
+        mi[, c("lhs", "op", "rhs", "mi", "epc", "sepc.all")],
+        row.names = FALSE,
+        digits = 3
+      )
+    }
+  }
+
+  diagnose_fit(fit_m1, "M1 (single factor)")
+  diagnose_fit(fit_m2, "M2 (correlated reporters)")
+  diagnose_fit(fit_m3_diag, "M3 (within-reporter CU)") # use raw fit before NULL
+  diagnose_fit(fit_m4, "M4 (cross-reporter CU)")
+
+  # --- M2 characterization -------------------------------------------------
+  # Latent reporter correlation: r ≈ 1.0 = interchangeable; r < .90 = distinct
+  lat_cor <- if (!is.null(fit_m2)) {
+    tryCatch(lavaan::lavInspect(fit_m2, "cor.lv"), error = function(e) NULL)
+  } else {
+    NULL
+  }
+
+  # Latent correlation with SE and 95% CI from parameterEstimates
+  lat_cor_row <- NULL
+  if (!is.null(fit_m2)) {
+    pe <- tryCatch(
+      lavaan::parameterEstimates(fit_m2, ci = TRUE, standardized = TRUE),
+      error = function(e) NULL
+    )
+    if (!is.null(pe)) {
+      lat_cor_row <- pe[
+        pe$op == "~~" & pe$lhs == "reporter_p" & pe$rhs == "reporter_y",
+      ]
+    }
+  }
+
+  if (!is.null(lat_cor)) {
+    cat("\nM2 latent reporter correlation [", sex_label, "]:\n")
+    print(round(lat_cor, 3))
+  }
+  if (!is.null(lat_cor_row) && nrow(lat_cor_row) > 0) {
+    cat(sprintf(
+      "  r = %.3f, SE = %.3f, 95%% CI [%.3f, %.3f]\n",
+      lat_cor_row$std.all,
+      lat_cor_row$se,
+      lat_cor_row$ci.lower,
+      lat_cor_row$ci.upper
+    ))
+  }
+
+  # Standardized loadings for both reporter factors
+  m2_loadings <- NULL
+  if (!is.null(fit_m2)) {
+    pe <- tryCatch(
+      lavaan::parameterEstimates(fit_m2, ci = TRUE, standardized = TRUE),
+      error = function(e) NULL
+    )
+    if (!is.null(pe)) {
+      m2_loadings <- pe[
+        pe$op == "=~",
+        c("lhs", "rhs", "std.all", "se", "ci.lower", "ci.upper", "pvalue")
+      ] %>%
+        dplyr::rename(factor = lhs, item = rhs, std_loading = std.all) %>%
+        dplyr::mutate(sex = sex_label)
+
+      cat("\nM2 standardized loadings [", sex_label, "]:\n")
+      print(
+        m2_loadings[, c(
+          "factor",
+          "item",
+          "std_loading",
+          "se",
+          "ci.lower",
+          "ci.upper"
+        )],
+        digits = 3,
+        row.names = FALSE
+      )
+    }
+  }
+
+  # --- M2 refinement -------------------------------------------------------
+  # Add residual correlations with MI > 10 to improve M2 fit.
+  # Only ~~ paths between observed items (no cross-loadings, no factor terms).
+  fit_m2_refined <- NULL
+  mod_m2_refined <- NULL
+  m2_ref_loadings <- NULL
+  m2_ref_fit_row <- NULL
+
+  if (!is.null(fit_m2)) {
+    mi_m2 <- tryCatch(
+      lavaan::modindices(fit_m2, sort. = TRUE, op = "~~"),
+      error = function(e) NULL
+    )
+    if (!is.null(mi_m2)) {
+      lv_names <- c("reporter_p", "reporter_y")
+      mi_sig <- mi_m2[
+        mi_m2$mi >= 10 &
+          mi_m2$lhs != mi_m2$rhs &
+          !(mi_m2$lhs %in% lv_names) &
+          !(mi_m2$rhs %in% lv_names),
+      ]
+
+      if (nrow(mi_sig) > 0) {
+        cat(
+          "\nM2 refinement: adding",
+          nrow(mi_sig),
+          "residual correlations [",
+          sex_label,
+          "]:\n"
+        )
+        print(
+          mi_sig[, c("lhs", "op", "rhs", "mi", "epc", "sepc.all")],
+          row.names = FALSE,
+          digits = 3
+        )
+
+        extra_cu <- paste0(mi_sig$lhs, " ~~ ", mi_sig$rhs)
+        mod_m2_refined <- paste0(
+          "reporter_p =~ ",
+          paste(cr_items_p, collapse = " + "),
+          "\n",
+          "reporter_y =~ ",
+          paste(cr_items_y, collapse = " + "),
+          "\n",
+          paste(extra_cu, collapse = "\n")
+        )
+        fit_m2_refined <- safe_cfa(mod_m2_refined, "M2_refined")
+
+        if (!is.null(fit_m2_refined)) {
+          m2_ref_fit_row <- fit_to_row(fit_m2_refined, fi_names) %>%
+            mutate(model = "m2_refined", sex = sex_label)
+          cat("\nM2_refined fit [", sex_label, "]:\n")
+          print(m2_ref_fit_row)
+
+          pe_ref <- tryCatch(
+            lavaan::parameterEstimates(
+              fit_m2_refined,
+              ci = TRUE,
+              standardized = TRUE
+            ),
+            error = function(e) NULL
+          )
+          if (!is.null(pe_ref)) {
+            m2_ref_loadings <- pe_ref[
+              pe_ref$op == "=~",
+              c("lhs", "rhs", "std.all", "se", "ci.lower", "ci.upper", "pvalue")
+            ] %>%
+              dplyr::rename(factor = lhs, item = rhs, std_loading = std.all) %>%
+              dplyr::mutate(sex = sex_label, model = "m2_refined")
+          }
+        }
+      } else {
+        cat(
+          "\nM2 fit acceptable — no refinement paths added [",
+          sex_label,
+          "]\n"
+        )
+        mod_m2_refined <- paste0(
+          "reporter_p =~ ",
+          paste(cr_items_p, collapse = " + "),
+          "\n",
+          "reporter_y =~ ",
+          paste(cr_items_y, collapse = " + ")
+        )
+        fit_m2_refined <- fit_m2
+        m2_ref_loadings <- m2_loadings %>% dplyr::mutate(model = "m2_refined")
+        m2_ref_fit_row <- fit_to_row(fit_m2, fi_names) %>%
+          mutate(model = "m2_refined", sex = sex_label)
+      }
+    }
+  }
+
   list(
     fit_table = fit_table,
     omega = sl,
     fit_m1 = fit_m1,
     fit_m2 = fit_m2,
-    fit_m3 = fit_m3
+    fit_m3 = fit_m3,
+    fit_m4 = fit_m4,
+    fit_m2_refined = fit_m2_refined,
+    mod_m2_refined = mod_m2_refined,
+    lat_cor = lat_cor,
+    lat_cor_row = lat_cor_row,
+    m2_loadings = m2_loadings,
+    m2_ref_loadings = m2_ref_loadings,
+    m2_ref_fit_row = m2_ref_fit_row
   )
 }
 
@@ -534,13 +1110,13 @@ bf_female <- run_bifactor_section(
   female_parent,
   female_youth,
   "female",
-  include_pete = TRUE
+  include_pete = FALSE
 )
 bf_male <- run_bifactor_section(
   male_parent,
   male_youth,
   "male",
-  include_pete = TRUE
+  include_pete = TRUE # mpete is ordinal (1-4); only fpete is excluded (binary + r≈1)
 )
 
 bifactor_fits <- bind_rows(
@@ -553,19 +1129,207 @@ write.csv(
   row.names = FALSE
 )
 
+# M2 latent correlation summary (both sexes)
+lat_cor_summary <- bind_rows(
+  bf_female$lat_cor_row,
+  bf_male$lat_cor_row
+) %>%
+  dplyr::mutate(sex = c("female", "male")[seq_len(n())])
+write.csv(
+  lat_cor_summary,
+  file.path(out_dir, "m2_latent_correlation.csv"),
+  row.names = FALSE
+)
+
+# M2 standardized loadings (both sexes)
+m2_loadings_all <- bind_rows(bf_female$m2_loadings, bf_male$m2_loadings)
+write.csv(
+  m2_loadings_all,
+  file.path(out_dir, "m2_standardized_loadings.csv"),
+  row.names = FALSE
+)
+
+# M2_refined loadings and fit row
+m2_ref_loadings_all <- bind_rows(
+  bf_female$m2_ref_loadings,
+  bf_male$m2_ref_loadings
+)
+m2_ref_fit_all <- bind_rows(
+  bf_female$m2_ref_fit_row,
+  bf_male$m2_ref_fit_row
+)
+if (nrow(m2_ref_loadings_all) > 0) {
+  write.csv(
+    m2_ref_loadings_all,
+    file.path(out_dir, "m2_refined_loadings.csv"),
+    row.names = FALSE
+  )
+}
+cat(
+  "\nM2 results written to: m2_latent_correlation.csv,",
+  "m2_standardized_loadings.csv, m2_refined_loadings.csv\n"
+)
+
+# --- Visual: M2_refined standardized loading plot ----------------------------
+if (nrow(m2_ref_loadings_all) > 0) {
+  load_plot_df <- m2_ref_loadings_all %>%
+    mutate(
+      reporter = dplyr::recode(
+        factor,
+        reporter_p = "Parent",
+        reporter_y = "Youth"
+      ),
+      item_label = toupper(sub("_(p|y)$", "", item)),
+      sex_label = dplyr::recode(sex, female = "Female", male = "Male"),
+      item_label = factor(
+        item_label,
+        levels = rev(c("PETA", "PETB", "PETC", "PETD", "FPETE", "MPETE"))
+      )
+    )
+
+  p_loads <- ggplot(
+    load_plot_df,
+    aes(
+      x = std_loading,
+      y = item_label,
+      colour = reporter,
+      xmin = ci.lower,
+      xmax = ci.upper
+    )
+  ) +
+    geom_point(size = 3, position = position_dodge(0.5)) +
+    geom_errorbarh(height = 0.25, position = position_dodge(0.5)) +
+    geom_vline(xintercept = 0, linetype = "dashed", colour = "grey60") +
+    scale_colour_manual(
+      values = c(Parent = "#2166ac", Youth = "#d73027"),
+      name = "Reporter"
+    ) +
+    facet_wrap(~sex_label) +
+    labs(
+      title = "M2_refined: standardized factor loadings",
+      subtitle = "Point estimate ± 95% CI",
+      x = "Standardized loading",
+      y = NULL
+    ) +
+    theme_minimal(base_size = 14) +
+    theme(
+      panel.grid.minor = element_blank(),
+      strip.text = element_text(face = "bold"),
+      legend.position = "bottom",
+      plot.subtitle = element_text(colour = "grey45", size = 11)
+    )
+
+  ggsave(
+    file.path(out_dir, "m2_refined_loadings_plot.png"),
+    p_loads,
+    width = 9,
+    height = 5,
+    dpi = 180
+  )
+  cat("M2_refined loading plot written.\n")
+}
+
+# --- Visual: model fit comparison (M1, M2, M2_refined) ----------------------
+fit_compare_df <- bind_rows(
+  bf_female$fit_table %>%
+    filter(model %in% c("m1_single_factor", "m2_corr_reporters")),
+  m2_ref_fit_all,
+  bf_male$fit_table %>%
+    filter(model %in% c("m1_single_factor", "m2_corr_reporters"))
+) %>%
+  filter(!is.na(cfi.scaled)) %>%
+  mutate(
+    model_label = dplyr::recode(
+      model,
+      m1_single_factor = "M1: Single factor",
+      m2_corr_reporters = "M2: Corr. reporters",
+      m2_refined = "M2_refined"
+    ),
+    model_label = factor(
+      model_label,
+      levels = c("M1: Single factor", "M2: Corr. reporters", "M2_refined")
+    ),
+    sex_label = dplyr::recode(sex, female = "Female", male = "Male")
+  ) %>%
+  tidyr::pivot_longer(
+    c(cfi.scaled, rmsea.scaled, srmr),
+    names_to = "index",
+    values_to = "value"
+  ) %>%
+  mutate(
+    index = dplyr::recode(
+      index,
+      cfi.scaled = "CFI",
+      rmsea.scaled = "RMSEA",
+      srmr = "SRMR"
+    )
+  )
+
+thresholds <- data.frame(
+  index = c("CFI", "RMSEA", "SRMR"),
+  good = c(0.95, 0.06, 0.08),
+  direction = c("above", "below", "below")
+)
+
+p_fit <- ggplot(
+  fit_compare_df,
+  aes(x = model_label, y = value, fill = model_label)
+) +
+  geom_col(width = 0.6) +
+  geom_hline(
+    data = thresholds,
+    aes(yintercept = good),
+    linetype = "dashed",
+    colour = "#d73027",
+    linewidth = 0.8
+  ) +
+  scale_fill_manual(
+    values = c(
+      "M1: Single factor" = "#d1e5f0",
+      "M2: Corr. reporters" = "#4393c3",
+      "M2_refined" = "#2166ac"
+    ),
+    guide = "none"
+  ) +
+  facet_grid(index ~ sex_label, scales = "free_y") +
+  labs(
+    title = "Model fit comparison: M1, M2, M2_refined",
+    subtitle = "Dashed line = conventional threshold",
+    x = NULL,
+    y = NULL
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    axis.text.x = element_text(angle = 25, hjust = 1, size = 10),
+    panel.grid.major.x = element_blank(),
+    strip.text = element_text(face = "bold"),
+    plot.subtitle = element_text(colour = "grey45", size = 11)
+  )
+
+ggsave(
+  file.path(out_dir, "model_fit_comparison.png"),
+  p_fit,
+  width = 9,
+  height = 7,
+  dpi = 180
+)
+cat("Model fit comparison plot written.\n")
+
 # ---------------------------------------------------------------------------
 # SECTION 2b: CROSS-REPORTER LONGITUDINAL INVARIANCE
 # Answers: does the multimethod model hold at each wave, and are the loadings
 # stable enough across waves to support a consistent longitudinal model?
-# Per-wave fits: M1/M2/M3 at each wave separately.
-# Multigroup invariance: M1 (reliable) and M2 (attempted) with wave as group.
+# Per-wave fits: M1–M3 at each wave.
+# Multigroup invariance (wave as group): M1 (single factor) and M2 (correlated
+# reporters) only — M3 too parameter-rich for 7-group invariance testing.
 # ---------------------------------------------------------------------------
 
 run_cr_longitudinal_invariance <- function(
   parent_df,
   youth_df,
   sex_label,
-  include_pete = FALSE
+  include_pete = FALSE,
+  mod_m2_refined = NULL # refined M2 syntax from run_bifactor_section
 ) {
   cat("\n\n=== Cross-reporter longitudinal invariance |", sex_label, "===\n")
 
@@ -591,28 +1355,24 @@ run_cr_longitudinal_invariance <- function(
   cr_items_p <- grep("_p$", cr_items, value = TRUE)
   cr_items_y <- grep("_y$", cr_items, value = TRUE)
 
-  mod_m1 <- paste0(
-    "method_p =~ ",
+  mod_m1 <- paste("puberty =~", paste(cr_items, collapse = " + "))
+  mod_m2 <- paste0(
+    "reporter_p =~ ",
     paste(cr_items_p, collapse = " + "),
     "\n",
-    "method_y =~ ",
+    "reporter_y =~ ",
     paste(cr_items_y, collapse = " + ")
   )
-  mod_m2 <- paste0(
-    "general  =~ ",
+  cu_within <- c(
+    apply(combn(cr_items_p, 2), 2, function(x) paste0(x[1], " ~~ ", x[2])),
+    apply(combn(cr_items_y, 2), 2, function(x) paste0(x[1], " ~~ ", x[2]))
+  )
+  mod_m3 <- paste0(
+    "puberty =~ ",
     paste(cr_items, collapse = " + "),
     "\n",
-    "method_p =~ ",
-    paste(cr_items_p, collapse = " + "),
-    "\n",
-    "method_y =~ ",
-    paste(cr_items_y, collapse = " + "),
-    "\n",
-    "general ~~ 0*method_p\n",
-    "general ~~ 0*method_y"
+    paste(cu_within, collapse = "\n")
   )
-  mod_m3 <- paste("pub =~", paste(cr_items, collapse = " + "))
-
   fi_names <- c(
     "cfi.scaled",
     "tli.scaled",
@@ -623,33 +1383,32 @@ run_cr_longitudinal_invariance <- function(
   )
 
   # --- Per-wave fits --------------------------------------------------------
-  cat("\n--- Per-wave fits (M1 / M2 / M3) ---\n")
+  cat("\n--- Per-wave fits (M1–M3) ---\n")
   wave_fits <- lapply(wave_order, function(wv) {
     sub <- dat_long %>% filter(wave == wv) %>% select(all_of(cr_items))
     if (nrow(sub) < 100) {
       return(NULL)
     }
-    lapply(
-      list(
-        m1_no_trait = mod_m1,
-        m2_trait_free_meth = mod_m2,
-        m3_trait_only = mod_m3
-      ),
-      function(mod) {
-        fit <- tryCatch(
-          lavaan::cfa(
-            mod,
-            data = sub,
-            ordered = cr_items,
-            estimator = "WLSMV",
-            missing = "pairwise"
-          ),
-          error = function(e) NULL
-        )
-        row <- fit_to_row(fit, fi_names)
-        if (!is.null(row)) mutate(row, wave = wv) else NULL
-      }
-    ) %>%
+    model_list <- list(
+      m1_single_factor = list(mod = mod_m1, theta = FALSE),
+      m2_corr_reporters = list(mod = mod_m2, theta = FALSE),
+      m3_cu_within = list(mod = mod_m3, theta = FALSE)
+    )
+    lapply(model_list, function(ml) {
+      fit <- tryCatch(
+        lavaan::cfa(
+          ml$mod,
+          data = sub,
+          ordered = cr_items,
+          estimator = "WLSMV",
+          parameterization = if (ml$theta) "theta" else "delta",
+          missing = "pairwise"
+        ),
+        error = function(e) NULL
+      )
+      row <- fit_to_row(fit, fi_names)
+      if (!is.null(row)) mutate(row, wave = wv) else NULL
+    }) %>%
       bind_rows(.id = "model") %>%
       mutate(sex = sex_label)
   }) %>%
@@ -658,6 +1417,9 @@ run_cr_longitudinal_invariance <- function(
   print_all(wave_fits)
 
   # --- Multigroup invariance across waves -----------------------------------
+  # Run for M1 (single factor) and M2 (correlated reporters): the two most
+  # stable models for multigroup invariance. M3 carries too many free
+  # parameters to test reliably with 7 wave groups.
   dat_grp <- dat_long %>%
     select(-id) %>%
     filter(!is.na(wave)) %>%
@@ -670,7 +1432,7 @@ run_cr_longitudinal_invariance <- function(
     scalar = c("loadings", "thresholds")
   )
 
-  run_mg_inv <- function(mod, label) {
+  run_mg_inv <- function(mod, label, theta = FALSE) {
     fits <- lapply(inv_levels, function(ge) {
       tryCatch(
         lavaan::cfa(
@@ -679,7 +1441,7 @@ run_cr_longitudinal_invariance <- function(
           group = "wave",
           ordered = cr_items,
           estimator = "WLSMV",
-          parameterization = "theta",
+          parameterization = if (theta) "theta" else "delta",
           group.equal = ge
         ),
         error = function(e) {
@@ -708,17 +1470,32 @@ run_cr_longitudinal_invariance <- function(
     tbl
   }
 
-  cat("\n--- Multigroup invariance across waves: M1 (no-trait baseline) ---\n")
-  inv_m1 <- run_mg_inv(mod_m1, "M1_no_trait")
+  cat("\n--- Multigroup invariance across waves: M1 (single factor) ---\n")
+  inv_m1 <- run_mg_inv(mod_m1, "M1_single_factor")
   print(inv_m1)
 
   cat(
-    "\n--- Multigroup invariance across waves: M2 (trait + free methods) ---\n"
+    "\n--- Multigroup invariance across waves: M2 (correlated reporters) ---\n"
   )
-  inv_m2 <- run_mg_inv(mod_m2, "M2_trait_free_meth")
+  inv_m2 <- run_mg_inv(mod_m2, "M2_corr_reporters")
   print(inv_m2)
 
-  list(wave_fits = wave_fits, inv_m1 = inv_m1, inv_m2 = inv_m2)
+  # M2_refined invariance — if a refined syntax was passed in
+  inv_m2_refined <- NULL
+  if (!is.null(mod_m2_refined) && !identical(mod_m2_refined, mod_m2)) {
+    cat(
+      "\n--- Multigroup invariance across waves: M2_refined ---\n"
+    )
+    inv_m2_refined <- run_mg_inv(mod_m2_refined, "M2_refined")
+    print(inv_m2_refined)
+  }
+
+  list(
+    wave_fits = wave_fits,
+    inv_m1 = inv_m1,
+    inv_m2 = inv_m2,
+    inv_m2_refined = inv_m2_refined
+  )
 }
 
 # Run with pete items — shows full picture including per-wave failures at
@@ -743,19 +1520,22 @@ write.csv(
   row.names = FALSE
 )
 
-# Run without pete items — ordinal-only (peta–petd) for stable multigroup
-# invariance estimates unaffected by fpete floor effects at early waves.
+# Main invariance run: females exclude fpete (binary, r≈1.0 cross-reporter);
+# males include mpete (ordinal 1-4, well-behaved — same scale as peta-petd).
+# Pass refined M2 syntax so invariance is tested on the final model.
 cr_long_female_ord <- run_cr_longitudinal_invariance(
   female_parent,
   female_youth,
   "female",
-  include_pete = FALSE
+  include_pete = FALSE,
+  mod_m2_refined = bf_female$mod_m2_refined
 )
 cr_long_male_ord <- run_cr_longitudinal_invariance(
   male_parent,
   male_youth,
   "male",
-  include_pete = FALSE
+  include_pete = TRUE,
+  mod_m2_refined = bf_male$mod_m2_refined
 )
 
 cr_wave_fits_ord <- bind_rows(
@@ -771,8 +1551,10 @@ write.csv(
 cr_inv_table <- bind_rows(
   cr_long_female_ord$inv_m1,
   cr_long_female_ord$inv_m2,
+  cr_long_female_ord$inv_m2_refined,
   cr_long_male_ord$inv_m1,
-  cr_long_male_ord$inv_m2
+  cr_long_male_ord$inv_m2,
+  cr_long_male_ord$inv_m2_refined
 )
 write.csv(
   cr_inv_table,
@@ -1008,6 +1790,18 @@ female_parent <- add_group_cols(female_parent)
 female_youth <- add_group_cols(female_youth)
 male_parent <- add_group_cols(male_parent)
 male_youth <- add_group_cols(male_youth)
+
+# Report site availability upfront so it's obvious if it will be skipped
+site_available <- !all(is.na(female_parent$site_group))
+cat(
+  "\nSite invariance:",
+  if (site_available) {
+    "ENABLED (site column found)"
+  } else {
+    "SKIPPED — 'site' column missing; re-run 00_data_foundation.R to include it"
+  },
+  "\n"
+)
 
 cov_inv_results <- list()
 for (ds_name in names(datasets)) {

@@ -42,9 +42,42 @@ vars <- c(
   "ab_g_stc__cohort_sex",
   "ab_g_stc__cohort_ethnrace__mhisp",
   "ab_g_dyn__visit__day1_inform",
-  "ab_g_dyn__design_site", # site — verify name if create_dataset errors
+  "ab_g_dyn__design_site",
   "ph_y_anthr__height_mean", # inches
-  "ph_y_anthr__weight_mean", # lbs  — if unavailable, BMI will be NA
+  "ph_y_anthr__weight_mean", # lbs
+  # PDS items — parent report
+  "ph_p_pds_001",
+  "ph_p_pds_002",
+  "ph_p_pds_003",
+  "ph_p_pds__f_001",
+  "ph_p_pds__f_002",
+  "ph_p_pds__m_001",
+  "ph_p_pds__m_002",
+  # PDS items — youth report
+  "ph_y_pds_001",
+  "ph_y_pds_002",
+  "ph_y_pds_003",
+  "ph_y_pds__f_001",
+  "ph_y_pds__f_002",
+  "ph_y_pds__m_001",
+  "ph_y_pds__m_002",
+  # ABCD-calculated PDS composites
+  "ph_p_pds__f_mean",
+  "ph_p_pds__m_mean",
+  "ph_y_pds__f_mean",
+  "ph_y_pds__m_mean",
+  # ABCD-calculated PDS categorical stage
+  "ph_p_pds__f_categ",
+  "ph_p_pds__m_categ",
+  "ph_y_pds__f_categ",
+  "ph_y_pds__m_categ"
+)
+
+# ---------------------------------------------------------------------------
+# CHARACTERIZE "DON'T KNOW" (999) AND "REFUSED" (777) RESPONSES
+# Pull raw PDS items *before* value_to_na conversion so codes are visible.
+# ---------------------------------------------------------------------------
+pds_item_vars <- c(
   "ph_p_pds_001",
   "ph_p_pds_002",
   "ph_p_pds_003",
@@ -61,6 +94,79 @@ vars <- c(
   "ph_y_pds__m_002"
 )
 
+raw_uncleaned <- create_dataset(
+  dir_data = data_root,
+  study = "abcd",
+  vars = c("ab_g_stc__cohort_sex", pds_item_vars),
+  value_to_na = FALSE,
+  bind_shadow = FALSE
+)
+
+wave_labels <- c(
+  "ses-00A" = "bl",
+  "ses-01A" = "fu1",
+  "ses-02A" = "fu2",
+  "ses-03A" = "fu3",
+  "ses-04A" = "fu4",
+  "ses-05A" = "fu5",
+  "ses-06A" = "fu6"
+)
+
+dk_long <- raw_uncleaned %>%
+  filter(session_id %in% names(wave_labels)) %>%
+  mutate(wave = recode(session_id, !!!wave_labels)) %>%
+  rename(sex = ab_g_stc__cohort_sex) %>%
+  select(participant_id, wave, sex, all_of(pds_item_vars)) %>%
+  mutate(across(all_of(pds_item_vars), ~ as.numeric(as.character(.)))) %>%
+  tidyr::pivot_longer(
+    all_of(pds_item_vars),
+    names_to = "item_raw",
+    values_to = "value"
+  ) %>%
+  mutate(
+    reporter = if_else(grepl("^ph_p", item_raw), "parent", "youth"),
+    response_type = case_when(
+      value == 777 ~ "refused",
+      value == 999 ~ "dont_know",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  filter(!is.na(response_type))
+
+dk_summary <- dk_long %>%
+  count(item_raw, reporter, sex, wave, response_type) %>%
+  arrange(item_raw, sex, reporter, wave, response_type)
+
+dk_overall <- dk_long %>%
+  count(item_raw, reporter, response_type) %>%
+  tidyr::pivot_wider(
+    names_from = response_type,
+    values_from = n,
+    values_fill = 0
+  ) %>%
+  arrange(item_raw, reporter)
+
+out_root_dk <- file.path(
+  root_path,
+  "projects/abcd-projs/dissertation/study1/outputs/data_quality"
+)
+dir.create(out_root_dk, showWarnings = FALSE, recursive = TRUE)
+write.csv(
+  dk_summary,
+  file.path(out_root_dk, "dk_refused_by_wave.csv"),
+  row.names = FALSE
+)
+write.csv(
+  dk_overall,
+  file.path(out_root_dk, "dk_refused_overall.csv"),
+  row.names = FALSE
+)
+
+cat("\n=== Don't-know / refused response summary ===\n")
+print(dk_overall)
+rm(raw_uncleaned, dk_long)
+
+# Main pull — value_to_na = TRUE converts 777/999 to NA
 raw <- create_dataset(
   dir_data = data_root,
   study = "abcd",
@@ -72,15 +178,6 @@ raw <- create_dataset(
 # ---------------------------------------------------------------------------
 # ANNUAL WAVES ONLY + WAVE LABEL
 # ---------------------------------------------------------------------------
-wave_labels <- c(
-  "ses-00A" = "bl",
-  "ses-01A" = "fu1",
-  "ses-02A" = "fu2",
-  "ses-03A" = "fu3",
-  "ses-04A" = "fu4",
-  "ses-05A" = "fu5",
-  "ses-06A" = "fu6"
-)
 
 data <- raw %>%
   filter(session_id %in% names(wave_labels)) %>%
@@ -110,7 +207,17 @@ data <- raw %>%
     petdf_y = ph_y_pds__f_001,
     fpete_y = ph_y_pds__f_002,
     petdm_y = ph_y_pds__m_001,
-    mpete_y = ph_y_pds__m_002
+    mpete_y = ph_y_pds__m_002,
+    # ABCD composites (may be NA if not available for this release)
+    abcd_comp_fp = ph_p_pds__f_mean,
+    abcd_comp_mp = ph_p_pds__m_mean,
+    abcd_comp_fy = ph_y_pds__f_mean,
+    abcd_comp_my = ph_y_pds__m_mean,
+    # ABCD categorical pubertal stage (1=prepubertal … 5=postpubertal)
+    pds_categ_fp = ph_p_pds__f_categ,
+    pds_categ_mp = ph_p_pds__m_categ,
+    pds_categ_fy = ph_y_pds__f_categ,
+    pds_categ_my = ph_y_pds__m_categ
   )
 
 # ---------------------------------------------------------------------------
@@ -167,32 +274,111 @@ data <- data %>%
     ~ if_else(. %in% c(777, 999), NA_real_, as.numeric(.))
   ))
 
-# ---------------------------------------------------------------------------
-# PDS COMPOSITES
-# 4-item mean (shared items peta–petd, excluding binary menarche/facial hair)
-# Females: mean(peta, petb, petc, petdf)
-# Males:   mean(peta, petb, petc, petdm)
-# Scored separately per reporter; NA if any item missing
-# ---------------------------------------------------------------------------
+# fpete raw coding is 0 = no menarche, 1 = yes menarche.
+# Shift to 1/2 so it sits on the same range as the ordinal items (1–4)
+# and passes the %in% 1:2 validity filter in downstream scripts.
 data <- data %>%
   mutate(
-    pds_comp_f_p = rowMeans(
-      cbind(peta_p, petb_p, petc_p, petdf_p),
-      na.rm = FALSE
+    fpete_p = if_else(!is.na(fpete_p), fpete_p + 1L, NA_real_),
+    fpete_y = if_else(!is.na(fpete_y), fpete_y + 1L, NA_real_)
+  )
+
+# ---------------------------------------------------------------------------
+# PDS COMPOSITES — ABCD-calculated means preferred; manual fallback if absent
+# ABCD composites: 4-item mean excluding sex-specific binary item (fpete/mpete)
+# ---------------------------------------------------------------------------
+use_abcd_comp <- function(abcd_col, fallback_cols, data) {
+  if (all(is.na(data[[abcd_col]]))) {
+    cat("  ABCD composite", abcd_col, "unavailable — using manual mean\n")
+    rowMeans(data[fallback_cols], na.rm = FALSE)
+  } else {
+    data[[abcd_col]]
+  }
+}
+
+data <- data %>%
+  mutate(
+    pds_comp_f_p = use_abcd_comp(
+      "abcd_comp_fp",
+      c("peta_p", "petb_p", "petc_p", "petdf_p"),
+      .
     ),
-    pds_comp_f_y = rowMeans(
-      cbind(peta_y, petb_y, petc_y, petdf_y),
-      na.rm = FALSE
+    pds_comp_f_y = use_abcd_comp(
+      "abcd_comp_fy",
+      c("peta_y", "petb_y", "petc_y", "petdf_y"),
+      .
     ),
-    pds_comp_m_p = rowMeans(
-      cbind(peta_p, petb_p, petc_p, petdm_p),
-      na.rm = FALSE
+    pds_comp_m_p = use_abcd_comp(
+      "abcd_comp_mp",
+      c("peta_p", "petb_p", "petc_p", "petdm_p"),
+      .
     ),
-    pds_comp_m_y = rowMeans(
-      cbind(peta_y, petb_y, petc_y, petdm_y),
-      na.rm = FALSE
+    pds_comp_m_y = use_abcd_comp(
+      "abcd_comp_my",
+      c("peta_y", "petb_y", "petc_y", "petdm_y"),
+      .
     )
   )
+
+# ---------------------------------------------------------------------------
+# CHARACTERIZE ABCD CATEGORICAL PUBERTAL STAGE
+# Frequency of each stage (1–5) by sex × reporter × wave.
+# Categories: 1=prepubertal, 2=early puberty, 3=mid puberty,
+#             4=late puberty, 5=postpubertal
+# ---------------------------------------------------------------------------
+categ_long <- data %>%
+  select(
+    id,
+    wave,
+    sex,
+    parent_female = pds_categ_fp,
+    parent_male = pds_categ_mp,
+    youth_female = pds_categ_fy,
+    youth_male = pds_categ_my
+  ) %>%
+  tidyr::pivot_longer(
+    c(parent_female, parent_male, youth_female, youth_male),
+    names_to = "reporter_sex",
+    values_to = "pds_categ"
+  ) %>%
+  tidyr::separate(reporter_sex, into = c("reporter", "item_sex"), sep = "_") %>%
+  filter(!is.na(pds_categ)) %>%
+  mutate(
+    pds_categ = as.integer(pds_categ),
+    stage_label = factor(
+      pds_categ,
+      levels = 1:5,
+      labels = c("prepubertal", "early", "mid", "late", "postpubertal")
+    )
+  )
+
+categ_freq <- categ_long %>%
+  count(sex, item_sex, reporter, wave, stage_label) %>%
+  group_by(sex, item_sex, reporter, wave) %>%
+  mutate(pct = round(100 * n / sum(n), 1)) %>%
+  ungroup() %>%
+  arrange(sex, item_sex, reporter, wave, stage_label)
+
+categ_overall <- categ_long %>%
+  count(sex, item_sex, reporter, stage_label) %>%
+  group_by(sex, item_sex, reporter) %>%
+  mutate(pct = round(100 * n / sum(n), 1)) %>%
+  ungroup() %>%
+  arrange(sex, item_sex, reporter, stage_label)
+
+write.csv(
+  categ_freq,
+  file.path(out_root_dk, "pds_categ_by_wave.csv"),
+  row.names = FALSE
+)
+write.csv(
+  categ_overall,
+  file.path(out_root_dk, "pds_categ_overall.csv"),
+  row.names = FALSE
+)
+
+cat("\n=== ABCD categorical pubertal stage (pooled across waves) ===\n")
+print(categ_overall, n = Inf)
 
 # ---------------------------------------------------------------------------
 # SEX × REPORTER LONG DATASETS
@@ -221,7 +407,8 @@ female_parent <- data %>%
     petc = petc_p,
     petd = petdf_p,
     fpete = fpete_p,
-    pds_comp = pds_comp_f_p
+    pds_comp = pds_comp_f_p,
+    pds_categ = pds_categ_fp
   ) %>%
   mutate(reporter = "parent")
 
@@ -234,7 +421,8 @@ female_youth <- data %>%
     petc = petc_y,
     petd = petdf_y,
     fpete = fpete_y,
-    pds_comp = pds_comp_f_y
+    pds_comp = pds_comp_f_y,
+    pds_categ = pds_categ_fy
   ) %>%
   mutate(reporter = "youth")
 
@@ -247,7 +435,8 @@ male_parent <- data %>%
     petc = petc_p,
     petd = petdm_p,
     mpete = mpete_p,
-    pds_comp = pds_comp_m_p
+    pds_comp = pds_comp_m_p,
+    pds_categ = pds_categ_mp
   ) %>%
   mutate(reporter = "parent")
 
@@ -260,7 +449,8 @@ male_youth <- data %>%
     petc = petc_y,
     petd = petdm_y,
     mpete = mpete_y,
-    pds_comp = pds_comp_m_y
+    pds_comp = pds_comp_m_y,
+    pds_categ = pds_categ_my
   ) %>%
   mutate(reporter = "youth")
 
