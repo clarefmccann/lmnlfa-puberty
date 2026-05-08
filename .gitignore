@@ -1,21 +1,16 @@
-# R
 .Rhistory
 .RData
 .Rproj.user/
 *.Rproj
 
-# Large model objects — recompute from scripts
 outputs/
-2025_*.pdf
+2025-17303-001.pdf
 
-# macOS metadata on network/SSHFS mounts
 ._*
 .DS_Store
 
-# HPC logs
 logs/
 
-# Quarto render artifacts
 *_files/
 *.html
 
