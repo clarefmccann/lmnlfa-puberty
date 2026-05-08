@@ -6,7 +6,7 @@
 
 # Large model objects — recompute from scripts
 outputs/
-
+2025_*.pdf
 
 # macOS metadata on network/SSHFS mounts
 ._*

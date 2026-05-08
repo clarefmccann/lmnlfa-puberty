@@ -75,7 +75,6 @@ vars <- c(
 
 # ---------------------------------------------------------------------------
 # CHARACTERIZE "DON'T KNOW" (999) AND "REFUSED" (777) RESPONSES
-# Pull raw PDS items *before* value_to_na conversion so codes are visible.
 # ---------------------------------------------------------------------------
 pds_item_vars <- c(
   "ph_p_pds_001",
@@ -166,7 +165,6 @@ cat("\n=== Don't-know / refused response summary ===\n")
 print(dk_overall)
 rm(raw_uncleaned, dk_long)
 
-# Main pull — value_to_na = TRUE converts 777/999 to NA
 raw <- create_dataset(
   dir_data = data_root,
   study = "abcd",
@@ -208,12 +206,10 @@ data <- raw %>%
     fpete_y = ph_y_pds__f_002,
     petdm_y = ph_y_pds__m_001,
     mpete_y = ph_y_pds__m_002,
-    # ABCD composites (may be NA if not available for this release)
     abcd_comp_fp = ph_p_pds__f_mean,
     abcd_comp_mp = ph_p_pds__m_mean,
     abcd_comp_fy = ph_y_pds__f_mean,
     abcd_comp_my = ph_y_pds__m_mean,
-    # ABCD categorical pubertal stage (1=prepubertal … 5=postpubertal)
     pds_categ_fp = ph_p_pds__f_categ,
     pds_categ_mp = ph_p_pds__m_categ,
     pds_categ_fy = ph_y_pds__f_categ,
@@ -228,7 +224,7 @@ data <- raw %>%
 data <- data %>%
   mutate(bmi = 703 * weight_lb / height_in^2)
 
-# age-standardized BMI z-score within sex (for use as covariate)
+# age-standardized BMI z-score within sex
 data <- data %>%
   group_by(sex, wave) %>%
   mutate(bmi_z = as.numeric(scale(bmi))) %>%
@@ -284,8 +280,7 @@ data <- data %>%
   )
 
 # ---------------------------------------------------------------------------
-# PDS COMPOSITES — ABCD-calculated means preferred; manual fallback if absent
-# ABCD composites: 4-item mean excluding sex-specific binary item (fpete/mpete)
+# PDS COMPOSITES
 # ---------------------------------------------------------------------------
 use_abcd_comp <- function(abcd_col, fallback_cols, data) {
   if (all(is.na(data[[abcd_col]]))) {
@@ -454,7 +449,6 @@ male_youth <- data %>%
   ) %>%
   mutate(reporter = "youth")
 
-# combined long (all four) — useful for cross-reporter models
 all_long <- bind_rows(female_parent, female_youth, male_parent, male_youth)
 
 # ---------------------------------------------------------------------------

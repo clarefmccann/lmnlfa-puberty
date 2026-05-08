@@ -5,7 +5,7 @@
 ##   (2) Do we need both parent and youth items, or are they redundant?
 ##       (cross-reporter bifactor CFA)
 ## Also runs longitudinal measurement invariance and invariance across
-## age tertiles, race/ethnicity, and BMI tertiles.
+## age tertiles, race/ethnicity, and BMI tertiles. ## to do: add site somehow??
 ## Requires outputs from 00_data_foundation.R.
 
 # export DATA_DIR="/u/project/silvers/data/ABCD/ABCD-release-6.0/cfm/physical-health/puberty"
@@ -82,7 +82,6 @@ male_youth <- read.csv(file.path(pub_root, "male_youth_long.csv"))
 
 wave_order <- c("bl", "fu1", "fu2", "fu3", "fu4", "fu5", "fu6")
 
-# fpete (menarche, binary 1/2) is female-only; mpete (genital dev, ordinal 1-4) is male-only.
 # Invariance sections and bifactor use the shared 4-item ordinal set only.
 ordinal_items <- c("peta", "petb", "petc", "petd")
 female_items <- c("peta", "petb", "petc", "petd", "fpete")
@@ -239,7 +238,7 @@ for (ds_name in names(datasets)) {
       error = function(e) NULL
     )
 
-    # --- GRM (ordinal items only; binary items such as fpete are excluded) ---
+    # --- GRM (ordinal items only; fpete excluded) ---
     grm_fit <- tryCatch(
       {
         mat <- as.matrix(sub[items_ord_avail]) - 1L # mirt expects 0-based
@@ -658,7 +657,7 @@ if (nrow(pa_plot_df) > 0) {
 # SECTION 2: CROSS-REPORTER BIFACTOR CFA
 # One randomly selected wave per participant (preserves independence).
 # Per sex. Tests whether a general puberty factor + reporter method factors
-# fits better than two separate reporter factors.
+# fits better than two separate reporter factors. ## to do: also select one time point randomly for each participant for the above analyses
 # ---------------------------------------------------------------------------
 
 build_cr_data <- function(parent_df, youth_df, include_pete = FALSE) {
@@ -1116,7 +1115,7 @@ bf_male <- run_bifactor_section(
   male_parent,
   male_youth,
   "male",
-  include_pete = TRUE # mpete is ordinal (1-4); only fpete is excluded (binary + r≈1)
+  include_pete = TRUE
 )
 
 bifactor_fits <- bind_rows(
@@ -1499,7 +1498,7 @@ run_cr_longitudinal_invariance <- function(
 }
 
 # Run with pete items — shows full picture including per-wave failures at
-# baseline due to fpete floor effects; useful for diagnosing item behaviour.
+# baseline due to fpete floor effects
 cr_long_female <- run_cr_longitudinal_invariance(
   female_parent,
   female_youth,
@@ -1520,8 +1519,7 @@ write.csv(
   row.names = FALSE
 )
 
-# Main invariance run: females exclude fpete (binary, r≈1.0 cross-reporter);
-# males include mpete (ordinal 1-4, well-behaved — same scale as peta-petd).
+# Main invariance run: females exclude fpete ;
 # Pass refined M2 syntax so invariance is tested on the final model.
 cr_long_female_ord <- run_cr_longitudinal_invariance(
   female_parent,
@@ -1823,7 +1821,7 @@ write.csv(
 )
 
 # ---------------------------------------------------------------------------
-# SUMMARY PLOT: item discrimination heatmap across waves (slide-ready)
+# SUMMARY PLOT: item discrimination heatmap across waves
 # ---------------------------------------------------------------------------
 if (nrow(disc_table) > 0) {
   disc_plot_df <- disc_table %>%
@@ -1896,7 +1894,7 @@ if (nrow(disc_table) > 0) {
 }
 
 # ---------------------------------------------------------------------------
-# SUMMARY PLOT: covariate invariance heatmap (slide-ready)
+# SUMMARY PLOT: covariate invariance heatmap
 # ---------------------------------------------------------------------------
 if (nrow(cov_inv_table) > 0 && "delta_cfi" %in% names(cov_inv_table)) {
   inv_plot_df <- cov_inv_table %>%
@@ -1981,7 +1979,7 @@ if (nrow(cov_inv_table) > 0 && "delta_cfi" %in% names(cov_inv_table)) {
 }
 
 # ---------------------------------------------------------------------------
-# SUMMARY PLOT: longitudinal invariance heatmap (slide-ready)
+# SUMMARY PLOT: longitudinal invariance heatmap
 # ---------------------------------------------------------------------------
 if (length(long_inv) > 0) {
   long_inv_plot_df <- long_inv_table %>%

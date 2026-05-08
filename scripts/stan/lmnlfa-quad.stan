@@ -1,38 +1,38 @@
 data {
   // dimensions
-  int<lower=1> nobs;              // total person-occasion-item observations
-  int<lower=1> p;                 // number of items
-  int<lower=1> ni;                // number of individuals
-  int<lower=1> d;                 // number of time points (waves)
+  int<lower=1> nobs;
+  int<lower=1> p;
+  int<lower=1> ni;
+  int<lower=1> d;
 
   // indices
   array[nobs] int<lower=1, upper=ni> person;
   array[nobs] int<lower=1, upper=p>  itm;
   array[nobs] int<lower=1, upper=d>  time;
 
-  // time metric (centered age and centered age^2, computed in R)
+  // time metric
   vector[nobs] age_c;
   vector[nobs] age2_c;
 
   // responses
-  array[nobs] int y;                       // holds both 0/1 and 1..k responses
-  array[p]    int<lower=0, upper=1> is_binary; // 1 if item is 0/1, else 0
+  array[nobs] int y;
+  array[p]    int<lower=0, upper=1> is_binary;
 
-  // for ordinal items:
-  array[p] int<lower=2> k_item;  // number of categories per item (set 2 for binary, harmless)
-  int<lower=1> k_max;            // max categories across items (e.g. 4)
+  // ordinal structure
+  array[p] int<lower=2> k_item;
+  int<lower=1> k_max;
 
   // predictors
-  int<lower=0> nfpreds;           // # time-invariant predictors
-  int<lower=0> ntvpreds;          // # time-varying predictors
-  matrix[ni,   nfpreds] xf_person;  // person-level covariates
-  matrix[nobs, nfpreds] xf;         // time-invariant covariates (baseline age, etc.)
-  matrix[nobs, ntvpreds] xtv;       // time-varying covariates
+  int<lower=0> nfpreds;
+  int<lower=0> ntvpreds;
+  matrix[ni,   nfpreds] xf_person;
+  matrix[nobs, nfpreds] xf;
+  matrix[nobs, ntvpreds] xtv;
 
-  // DIF pattern (col 1 = time-varying DIF by age, col 2 = invariant DIF)
+  // DIF pattern (col 1 = time-varying, col 2 = invariant)
   matrix[p, 2] ldf;
-  int<lower=0> mtv;   // count of items flagged for time-varying DIF
-  int<lower=0> mf;    // count of items flagged for invariant DIF
+  int<lower=0> mtv;
+  int<lower=0> mf;
 
   // prior scales
   real<lower=0> sigma_l;
@@ -43,52 +43,49 @@ data {
 }
 
 parameters {
-  // baseline loadings/intercepts
+  // item parameters
   vector<lower=0>[p] lp;
   vector[p] np;
 
-  // DIF params (mapped to item-length vectors via ldf)
-  vector[mf]  l_diff;    // loading DIF invariant
-  vector[mtv] l_diftv;   // loading DIF time-varying
-  vector[mf]  n_diff;    // intercept DIF invariant
-  vector[mtv] n_diftv;   // intercept DIF time-varying
+  // DIF parameters
+  vector[mf]  l_diff;
+  vector[mtv] l_diftv;
+  vector[mf]  n_diff;
+  vector[mtv] n_diftv;
 
-  // growth factor means (intercept mean fixed to 0 for identification)
+  // fixed growth means (intercept mean = 0 for identification)
   real mu_slp;
-  real mu_quad;
+  real mu_quad;   // fixed quadratic; individuals share same curvature
 
-  // growth factor SDs
+  // random intercept + slope SDs (2-factor; no random quadratic)
   real<lower=0> phi_int;
   real<lower=0> phi_slp;
-  real<lower=0> phi_quad;
   real<lower=0> eti_sd;
 
-  // impact of time-invariant predictors on growth factor means/SDs
-  matrix[3, nfpreds] b_mu;
-  matrix[3, nfpreds] b_phi;
+  // covariate impact on growth factor means / SDs (2 growth factors)
+  matrix[2, nfpreds] b_mu;
+  matrix[2, nfpreds] b_phi;
 
-  // Cholesky factor of 3×3 correlation matrix among growth factors
-  cholesky_factor_corr[3] L_Omega;
+  // Cholesky of 2×2 correlation between intercept and slope
+  cholesky_factor_corr[2] L_Omega;
 
-  // non-centered random effects
-  matrix[3, ni] fac_dist;     // std-normal draws for growth random effects
-  matrix[d, ni] fac_eti_raw;  // time-specific residuals (before scaling)
+  // non-centered random effects (2 × ni)
+  matrix[2, ni] fac_dist;
+  matrix[d, ni] fac_eti_raw;
 
-  // ordinal thresholds (k_max-1 per item; ignored for binary items)
+  // ordinal thresholds
   array[p] ordered[k_max - 1] tau;
 }
 
 transformed parameters {
-  // expand DIF vectors to item length (0 for non-flagged items)
   vector[p] ldiff  = rep_vector(0, p);
   vector[p] ldiftv = rep_vector(0, p);
   vector[p] ndiff  = rep_vector(0, p);
   vector[p] ndiftv = rep_vector(0, p);
 
-  vector<lower=0>[3] phi_eta;
+  vector<lower=0>[2] phi_eta;
   phi_eta[1] = phi_int;
   phi_eta[2] = phi_slp;
-  phi_eta[3] = phi_quad;
 
   matrix[d, ni] fac_eti = fac_eti_raw * eti_sd;
 
@@ -97,43 +94,28 @@ transformed parameters {
 
     tmp = 0;
     for (i in 1:p) {
-      if (ldf[i, 2] == 1) {
-        tmp += 1;
-        ldiff[i] = l_diff[tmp];
-      }
+      if (ldf[i, 2] == 1) { tmp += 1; ldiff[i] = l_diff[tmp]; }
     }
-
     tmp = 0;
     for (i in 1:p) {
-      if (ldf[i, 1] == 1) {
-        tmp += 1;
-        ldiftv[i] = l_diftv[tmp];
-      }
+      if (ldf[i, 1] == 1) { tmp += 1; ldiftv[i] = l_diftv[tmp]; }
     }
-
     tmp = 0;
     for (i in 1:p) {
-      if (ldf[i, 2] == 1) {
-        tmp += 1;
-        ndiff[i] = n_diff[tmp];
-      }
+      if (ldf[i, 2] == 1) { tmp += 1; ndiff[i] = n_diff[tmp]; }
     }
-
     tmp = 0;
     for (i in 1:p) {
-      if (ldf[i, 1] == 1) {
-        tmp += 1;
-        ndiftv[i] = n_diftv[tmp];
-      }
+      if (ldf[i, 1] == 1) { tmp += 1; ndiftv[i] = n_diftv[tmp]; }
     }
   }
 }
 
 model {
-  // --- local declarations must come first ---
-  matrix[3, ni] fac_gr;
+  // local declarations first
+  matrix[2, ni] fac_gr;
 
-  // --- priors ---
+  // priors
   lp      ~ normal(0, sigma_l);
   np      ~ normal(0, sigma_nu);
   eti_sd  ~ normal(0, sigma_f);
@@ -149,9 +131,8 @@ model {
   mu_slp  ~ normal(0, sigma_f);
   mu_quad ~ normal(0, sigma_f);
 
-  phi_int  ~ normal(0, sigma_f);
-  phi_slp  ~ normal(0, sigma_f);
-  phi_quad ~ normal(0, sigma_f);
+  phi_int ~ normal(0, sigma_f);
+  phi_slp ~ normal(0, sigma_f);
 
   L_Omega ~ lkj_corr_cholesky(sigma_cor);
   to_vector(fac_dist)    ~ normal(0, 1);
@@ -160,13 +141,12 @@ model {
     tau[it] ~ normal(0, 1.5);
   }
 
-  // --- growth factors per person (non-centered parameterization) ---
+  // growth factors: random intercept + slope, fixed quadratic mean
   for (k in 1:ni) {
-    vector[3] mu_eta;
-    vector[3] sd_eta;
+    vector[2] mu_eta;
+    vector[2] sd_eta;
     mu_eta[1] = 0;
     mu_eta[2] = mu_slp;
-    mu_eta[3] = mu_quad;
 
     sd_eta = phi_eta .* exp(b_phi * (xf_person[k, ]'));
     fac_gr[, k] = mu_eta
@@ -174,15 +154,16 @@ model {
                 + diag_pre_multiply(sd_eta, L_Omega) * fac_dist[, k];
   }
 
-  // --- likelihood ---
+  // likelihood
   for (j in 1:nobs) {
     int ti = time[j];
     int it = itm[j];
     int pe = person[j];
 
+    // individual trajectory: random intercept + slope, shared quadratic
     real eta_j = fac_gr[1, pe]
                + fac_gr[2, pe] * age_c[j]
-               + fac_gr[3, pe] * age2_c[j]
+               + mu_quad        * age2_c[j]
                + fac_eti[ti, pe];
 
     real nu  = np[it]
@@ -200,6 +181,6 @@ model {
 }
 
 generated quantities {
-  // posterior correlation matrix among growth factors
-  matrix[3, 3] Omega = multiply_lower_tri_self_transpose(L_Omega);
+  // recover correlation between random intercept and slope
+  matrix[2, 2] Omega = multiply_lower_tri_self_transpose(L_Omega);
 }

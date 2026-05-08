@@ -69,12 +69,10 @@ for (df_name in c(
 
 # ---------------------------------------------------------------------------
 # SECTION 0: RAW TRAJECTORY CHARACTERIZATION
-# Descriptives + plots for individual items, PDS composite, categorical stage.
 # ---------------------------------------------------------------------------
 char_dir <- file.path(out_base, "characterization")
 dir.create(char_dir, showWarnings = FALSE, recursive = TRUE)
 
-# mpete is ordinal 1-4 (genital development), same scale as peta-petd.
 # Only fpete (menarche) is binary (1 = no, 2 = yes after foundation recode).
 ord_f <- c("peta", "petb", "petc", "petd")
 ord_m <- c("peta", "petb", "petc", "petd", "mpete")
@@ -130,7 +128,6 @@ cat("\n=== Ordinal item descriptives by wave ===\n")
 print(item_desc, n = Inf)
 
 # ---- 0b. Binary item (fpete: menarche) proportion-yes by wave ---------------
-# Males have no binary item; only female datasets have fpete.
 describe_binary <- function(df, bin_item, label) {
   if (is.null(bin_item) || !bin_item %in% names(df)) {
     return(NULL)
@@ -414,7 +411,6 @@ cat("\nCharacterization outputs written to:", char_dir, "\n")
 ordinal_items_f <- c("peta", "petb", "petc", "petd")
 ordinal_items_m <- c("peta", "petb", "petc", "petd", "mpete")
 
-# Only fpete (menarche) is binary — mpete is ordinal 1-4, handled with peta-petd
 binary_item_f <- "fpete"
 
 flag_regression <- function(df, ordinal_items, binary_item = NULL) {

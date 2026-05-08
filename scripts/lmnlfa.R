@@ -290,12 +290,17 @@ fit_stan <- function(
   label = ""
 ) {
   cat("\nFitting Stan model", label, "...\n")
+  # init = "0" starts all parameters at 0 in unconstrained space, which maps
+  # cholesky_factor_corr to the identity (zero correlation) — avoids the
+  # boundary-hit warnings from random initialization
   model$sample(
     data = stan_data,
     chains = chains,
     parallel_chains = min(chains, parallel::detectCores() - 1),
     iter_warmup = iter_warmup,
     iter_sampling = iter_sampling,
+    adapt_delta = 0.95,
+    init = "0",
     refresh = 200,
     show_messages = TRUE,
     seed = 90025
@@ -354,7 +359,7 @@ select_dif <- function(fit1, prep, ci_level = 0.90) {
 # HELPER: extract growth parameters from Step 2
 # ---------------------------------------------------------------------------
 extract_growth_params <- function(fit2, sex_label) {
-  params <- c("mu_slp", "mu_quad", "phi_int", "phi_slp", "phi_quad", "eti_sd")
+  params <- c("mu_slp", "mu_quad", "phi_int", "phi_slp", "eti_sd", "Omega[1,2]")
   draws <- fit2$draws(variables = params, format = "df")
 
   summ <- posterior::summarise_draws(
@@ -444,7 +449,6 @@ extract_factor_scores <- function(fit2, prep, ldf_step2, sex_label) {
       "b_phi",
       "phi_int",
       "phi_slp",
-      "phi_quad",
       "L_Omega",
       "fac_dist",
       "fac_eti_raw",
@@ -453,7 +457,6 @@ extract_factor_scores <- function(fit2, prep, ldf_step2, sex_label) {
     format = "df"
   )
 
-  # Use posterior mean for point estimates
   mu_slp <- mean(draws$mu_slp)
   mu_quad <- mean(draws$mu_quad)
   eti_sd <- mean(draws$eti_sd)
@@ -464,47 +467,41 @@ extract_factor_scores <- function(fit2, prep, ldf_step2, sex_label) {
   fac_dist_mean <- colMeans(as.matrix(draws[, fac_dist_cols]))
   fac_eti_mean <- colMeans(as.matrix(draws[, fac_eti_cols]))
 
-  # Reshape fac_dist: 3 × ni → fac_dist[k, i] = fac_dist_mean[(i-1)*3 + k]
   ni <- prep$ni
   d <- prep$d
 
-  fac_dist_mat <- matrix(fac_dist_mean, nrow = 3, ncol = ni)
+  # fac_dist is now 2 × ni (row-major in Stan → columns cycle fastest in R)
+  fac_dist_mat <- matrix(fac_dist_mean, nrow = 2, ncol = ni)
   fac_eti_mat <- matrix(fac_eti_mean * eti_sd, nrow = d, ncol = ni)
 
-  # For b_mu: impact of baseline age on growth factor means
-  # With nfpreds = 1, b_mu is 3 × 1
   b_mu_cols <- grep("^b_mu\\[", names(draws))
   b_phi_cols <- grep("^b_phi\\[", names(draws))
   b_mu_mean <- colMeans(as.matrix(draws[, b_mu_cols, drop = FALSE]))
   b_phi_mean <- colMeans(as.matrix(draws[, b_phi_cols, drop = FALSE]))
 
-  # Person-level baseline age (scaled, centered) — same as in make_stan_data
   age_by_person <- prep$dat_long %>%
     group_by(person_idx) %>%
     summarise(mean_age_c = mean(age_c, na.rm = TRUE), .groups = "drop") %>%
     arrange(person_idx)
   xf_person <- scale(age_by_person$mean_age_c)[, 1]
 
-  # L_Omega: Cholesky of 3×3 correlation matrix
+  # L_Omega is now 2×2 Cholesky
   lomega_cols <- grep("^L_Omega\\[", names(draws))
   L_Omega_mean <- colMeans(as.matrix(draws[, lomega_cols]))
-  L_Omega_mat <- matrix(L_Omega_mean, nrow = 3, ncol = 3)
+  L_Omega_mat <- matrix(L_Omega_mean, nrow = 2, ncol = 2)
 
   phi_int <- mean(draws$phi_int)
   phi_slp <- mean(draws$phi_slp)
-  phi_quad <- mean(draws$phi_quad)
-  phi_eta <- c(phi_int, phi_slp, phi_quad)
+  phi_eta <- c(phi_int, phi_slp)
 
-  # Compute factor scores
   scores <- purrr::map_dfr(seq_len(ni), function(k) {
-    mu_eta <- c(0, mu_slp, mu_quad)
+    mu_eta <- c(0, mu_slp)
     sd_eta <- phi_eta * exp(b_phi_mean * xf_person[k])
     fac_gr_k <- mu_eta +
       b_mu_mean * xf_person[k] +
       diag(sd_eta) %*% L_Omega_mat %*% fac_dist_mat[, k]
 
     purrr::map_dfr(seq_len(d), function(t) {
-      # Age at this wave from data
       age_obs <- prep$dat_long %>%
         filter(person_idx == k, time_idx == t) %>%
         slice(1)
@@ -512,11 +509,11 @@ extract_factor_scores <- function(fit2, prep, ldf_step2, sex_label) {
         return(NULL)
       }
 
-      age_c <- age_obs$age_c[1]
-      age2_c <- age_obs$age2_c[1]
+      age_c_val <- age_obs$age_c[1]
+      age2_c_val <- age_obs$age2_c[1]
       eta_tp <- fac_gr_k[1] +
-        fac_gr_k[2] * age_c +
-        fac_gr_k[3] * age2_c +
+        fac_gr_k[2] * age_c_val +
+        mu_quad * age2_c_val +
         fac_eti_mat[t, k]
 
       tibble(
@@ -573,6 +570,60 @@ for (sx in c("female", "male")) {
     round(max(fit1$summary()$rhat, na.rm = TRUE), 3),
     "\n"
   )
+
+  # --- Diagnostics: growth variance parameters ----------------------------
+  cat("\n--- Growth variance diagnostics [Step 1 |", sx, "] ---\n")
+  diag_vars <- c("phi_int", "phi_slp", "eti_sd", "mu_slp", "mu_quad")
+  diag_summ <- fit1$summary(
+    variables = diag_vars,
+    mean,
+    sd,
+    ~ quantile(.x, c(0.05, 0.5, 0.95)),
+    posterior::default_convergence_measures()
+  )
+  print(diag_summ, digits = 3)
+
+  # intercept-slope correlation element of the Cholesky factor
+  lomega_summ <- fit1$summary(
+    variables = "L_Omega",
+    mean,
+    sd,
+    ~ quantile(.x, c(0.05, 0.5, 0.95))
+  )
+  cat("\nL_Omega (2x2 Cholesky; [2,1] is the correlation element):\n")
+  print(lomega_summ, digits = 3)
+
+  # How many times did phi_slp posterior mass sit below 0.05?
+  phi_slp_draws <- fit1$draws("phi_slp", format = "matrix")
+  cat(
+    sprintf(
+      "\n  phi_slp: mean=%.3f, P(phi_slp < 0.05)=%.2f%%\n",
+      mean(phi_slp_draws),
+      100 * mean(phi_slp_draws < 0.05)
+    )
+  )
+  cat(
+    sprintf(
+      "  phi_int: mean=%.3f\n",
+      mean(fit1$draws("phi_int", format = "matrix"))
+    )
+  )
+
+  # Worst-Rhat parameters
+  s1_summ <- fit1$summary()
+  bad_rhat <- s1_summ[!is.na(s1_summ$rhat) & s1_summ$rhat > 1.05, ]
+  if (nrow(bad_rhat) > 0) {
+    cat("\n  Parameters with Rhat > 1.05:\n")
+    print(
+      bad_rhat[order(-bad_rhat$rhat), c("variable", "mean", "sd", "rhat")][
+        seq_len(min(10, nrow(bad_rhat))),
+      ],
+      digits = 3
+    )
+  } else {
+    cat("\n  All Rhat <= 1.05\n")
+  }
+  cat(strrep("-", 50), "\n")
 
   # --- DIF selection ------------------------------------------------------
   dif_result <- select_dif(fit1, prep, ci_level = 0.90)

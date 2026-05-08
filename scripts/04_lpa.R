@@ -134,8 +134,7 @@ tt_list[["male_averaged"]] <- build_averaged("male")
 all_labels <- c(ds_names, "female_averaged", "male_averaged")
 
 # ---------------------------------------------------------------------------
-# Extract class assignments from a tidyLPA fit without relying on get_data()
-# storing the original data (some tidyLPA versions don't attach it).
+# Extract class assignments
 # ---------------------------------------------------------------------------
 extract_assignments <- function(fit) {
   # Try the official route first
@@ -147,7 +146,6 @@ extract_assignments <- function(fit) {
     return(result)
   }
 
-  # Fall back: pull the mclust object from the tidyProfile/tidyLPA structure
   mc <- NULL
   for (.acc in list(
     function(f) f$fit,
@@ -184,7 +182,7 @@ run_lpa <- function(df, label) {
     return(invisible(NULL))
   }
 
-  # Exclude participants with negative OLS slope — Tanner stages do not reverse;
+  # Exclude participants with negative OLS slope;
   # negative values are measurement artifacts (sparse data, caregiver switches).
   # NOTE: "acceleration" (d²PDS/dt² at onset) is intentionally excluded from
   # this filter — negative values there are biologically meaningful (growth rate

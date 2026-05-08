@@ -1,6 +1,6 @@
 ---
 title: "Pubertal Timing & Tempo"
-subtitle: "Individual Differences in the ABCD Cohort — Study 1"
+subtitle: "Individual Differences in ABCD — Study 1 (preliminary)"
 author: "Clare McCann"
 date: today
 format:
@@ -27,9 +27,6 @@ library(knitr)
 # export OUT_DIR="/u/home/c/clarefmc/projects/abcd-projs/dissertation/study1/outputs"
 # quarto render 05_slides.qmd
 
-# Output path detection.
-# On HPC: OUT_DIR env var points to the absolute outputs directory.
-# Locally: use a path relative to this QMD file (scripts/ → ../outputs/).
 out_base <- Sys.getenv("OUT_DIR")
 if (!nzchar(out_base)) {
   out_base <- file.path("..", "outputs")
@@ -45,17 +42,17 @@ safe_read <- function(path) {
   tryCatch(read.csv(path), error = function(e) NULL)
 }
 
-# Load timing/tempo summaries for sample size tables
+# timing/tempo summaries 
 tt_list <- lapply(ds_names, function(ds) {
   safe_read(file.path(gamm_dir, paste0(ds, "_timing_tempo.csv")))
 })
 names(tt_list) <- ds_names
 
-# Load LPA best-solutions summary if available
+# LPA best-solutions summary
 lpa_summary_path <- file.path(lpa_dir, "lpa_best_solutions_summary.csv")
 lpa_summary <- safe_read(lpa_summary_path)
 
-# Helper: display image or placeholder text
+# display image or placeholder text
 img <- function(path, width = "90%") {
   if (file.exists(path)) {
     knitr::include_graphics(path)
@@ -71,8 +68,9 @@ img <- function(path, width = "90%") {
 
 - Puberty is not a single event — it unfolds across years with meaningful individual variation
 - Two key dimensions:
-  - **Timing** — when pubertal development begins
+  - **Timing** — when an event occurs
   - **Tempo** — how rapidly it progresses
+- Often interpreted relative to peers
 - These are theoretically and empirically distinct yet often conflated
 
 ::: {.notes}
@@ -80,22 +78,20 @@ Motivate why we need to separate timing from tempo. Most prior work uses cross-s
 :::
 
 ## Study Aims
+1. **Explore the psychometrics of the PDS** using EFA, CFA, GRT, etc.
 
-1. **Characterize population-level pubertal trajectories** using factor-smooth GAMMs
-   - Fit a shared population curve + person-specific deviation in a single model (`mgcv::bam()`)
-   - Separates *when* puberty occurs from *how fast* it progresses — without a two-stage approach
 
-2. **Extract individual-level timing & tempo** estimates for each participant
+2. **Characterize population-level pubertal trajectories** using factor-smooth GAMMs
+   - fit a shared population curve + person-specific deviation in a single model 
+
+3. **Extract individual-level timing & tempo** estimates for each participant
    - **Timing deviation**: years earlier/later than cohort mean onset (PDS = 2.5 threshold)
-   - **Acceleration at onset**: d²(PDS)/d(age²) at the onset point — how rapidly the growth rate is changing when puberty begins
-   - **Peak velocity**: max d(PDS)/d(age) — retained for reference
+   - **Acceleration at onset**: d²(PDS)/d(age²) at the onset point — how rapidly the growth rate is changing at PDS = 2.5
 
 3. **Identify latent pubertal profiles** via Latent Profile Analysis
    - Cluster on timing deviation and acceleration at onset (z-scored within sample)
    - `tidyLPA`/mclust: K = 1–6 profiles × 3 covariance structures (EEI, VVI, EEE)
    - Model selection by BIC (lower = better) + entropy (class separation ≥ 0.80)
-
-4. [*Downstream: link profiles to outcomes — next script*]
 
 ::: {.notes}
 Fill in aim 4 once downstream analyses are complete.
@@ -126,25 +122,24 @@ knitr::kable(
 ```
 
 ::: {.notes}
-Participants without a timing estimate never crossed the onset threshold (PDS composite ≥ 2.0) within the observed age range — likely very early or very late developers relative to the measurement window.
+Participants without a timing estimate never crossed the onset threshold (PDS composite ≥ 2.5) within the observed age range — likely very early or very late developers relative to the measurement window.
 :::
 
 ## Measures
 
 - **PDS (Pubertal Development Scale)** — parent and youth report, annual waves
-- **Composite score**: mean of 4 items (body hair, sex-specific item, skin changes, petb)
-- Binary items (menarche / facial hair) modelled separately with binomial family
+- **Composite score**: mean of items (body hair, sex-specific item, skin changes, petb)
+- Binary item (menarche) modelled separately with binomial family
 - Up to 7 waves (baseline through follow-up 6)
 
 # Regression Characteristics {background-color="#f5f5f5"}
 
 ## What Is Item-Level Regression?
 
-- PDS items are ordinal (1–4); puberty is biologically irreversible
 - **Regression**: a participant's score on an item *decreases* from one wave to the next
 - Apparent regression can arise from:
   - Measurement error / inattentive responding
-  - **Caregiver switching** — a new reporter with no prior knowledge of the child
+  - **Caregiver switching** — a new reporter 
 - Understanding regression rates informs how we treat the longitudinal composite
 
 ## Regression Prevalence
@@ -297,7 +292,7 @@ One-factor CFA with WLSMV estimator. Fit is averaged across waves; wave-level ta
 :::
 
 ## Cross-Reporter Structure — Bifactor CFA
-
+- UPDATE WITH NEW MODEL COMPARISONS
 - Three models compared per sex:
   - **M1 (method-only)**: reporter-specific method factors, no general trait — tests whether parent and youth are measuring the same thing at all
   - **M2 (bifactor)**: general puberty factor + freely correlated reporter method factors — the theoretically preferred MTMM model
@@ -692,7 +687,6 @@ if (!is.null(lpa_summary)) {
 
 ::: {.incremental}
 - Factor-smooth GAMMs recover individual pubertal trajectories from longitudinal PDS data
-- Timing deviation and acceleration at onset are **negatively correlated** across profiles: earlier developers are still accelerating when puberty begins; later developers have already passed peak velocity
 - LPA identifies **K = 6** distinct pubertal profiles (BIC-optimal, Model 2/VVI, entropy .87–.94) that differ on both *when* and *how fast* puberty is changing at onset — replicated across all six sex × reporter solutions
 - Cross-reporter structure: both parent and youth load on a common puberty factor (M2 bifactor); reporter-specific variance present but structure is longitudinally stable (scalar ΔCFI < .001 for females; −.009 for males)
 - Next: link profile membership to outcomes
@@ -705,10 +699,6 @@ Fill in the bracketed text once LPA results are in and you've looked at the comp
 ## Thank You
 
 Questions?
-
-\vspace{1em}
-
-> *"Puberty is not just about when — it's about how fast."*
 
 ::: {.notes}
 Optional closing quote placeholder — swap for something more fitting or remove.
