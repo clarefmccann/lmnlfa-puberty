@@ -30,7 +30,7 @@ if (nzchar(cmdstan_env) && dir.exists(cmdstan_env)) {
   set_cmdstan_path(cmdstan_env)
 }
 cat("CmdStan path:", cmdstan_path(), "\n")
-
+options(mc.cores = as.integer(Sys.getenv("NSLOTS", unset = "4")))
 set.seed(90025)
 
 # ---------------------------------------------------------------------------
@@ -452,6 +452,7 @@ if (file.exists(rds_fit1)) {
 
   fit1$save_object(rds_fit1)
   cat("Step 1 fit saved:", rds_fit1, "\n")
+  rm(fit1); gc()
 }
 
 save_diagnostics(fit1, paste0("step1_", sx), out_dir)

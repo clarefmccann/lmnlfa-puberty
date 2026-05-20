@@ -2,8 +2,8 @@
 #$ -cwd
 #$ -N lmnlfa
 #$ -t 1-2
-#$ -l h_rt=36:00:00
-#$ -l h_data=64G
+#$ -l h_rt=20:00:00
+#$ -l h_data=32G
 #$ -pe shared 4
 #$ -j y
 #$ -o logs/lmnlfa_$JOB_ID.$TASK_ID.log
@@ -48,13 +48,16 @@ export OUT_DIR="/u/project/silvers/data/ABCD/cfm-dissertation-output/study1/outp
 # Path to the CmdStan installation created by cmdstanr::install_cmdstan()
 # Update the version number if you install a newer CmdStan.
 export CMDSTAN="${HOME}/.cmdstan/cmdstan-2.38.0"
-
+export TMPDIR="/u/scratch/${USER}/tmp"
+mkdir -p "$TMPDIR"
 SCRIPT_DIR="$SGE_O_WORKDIR"
 
 mkdir -p "${OUT_DIR}/lmnlfa"
 mkdir -p "${SCRIPT_DIR}/logs"
 
-export R_MAX_VSIZE=100Gb
+export OMP_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export R_MAX_VSIZE=100G
 
 Rscript "${SCRIPT_DIR}/lmnlfa_hpc.R" "$SX"
 
