@@ -253,7 +253,7 @@ make_stan_data <- function(prep, ldf = NULL, baseline_age = TRUE) {
     sigma_nu = 2.0,
     sigma_cor = 1.0,
     sigma_f = 1.5,
-    sigma_di = 0.5
+    sigma_di = 0.2
   )
 }
 
@@ -292,7 +292,7 @@ select_dif <- function(fit1, prep, ci_level = 0.90) {
 }
 
 extract_growth_params <- function(fit2, sex_label) {
-  params <- c("mu_slp", "mu_quad", "phi_int", "phi_slp", "Omega[1,2]")
+  params <- c("mu_slp", "phi_int", "phi_slp", "Omega[1,2]")
   draws <- fit2$draws(variables = params, format = "df")
   posterior::summarise_draws(
     draws,
@@ -307,19 +307,26 @@ extract_growth_params <- function(fit2, sex_label) {
 extract_factor_scores <- function(fit2, prep, ldf_step2, sex_label) {
   draws <- fit2$draws(
     variables = c(
-      "mu_slp", "mu_quad", "b_mu", "b_phi",
-      "phi_int", "phi_slp", "L_Omega", "fac_dist"
+      "mu_slp",
+      "b_mu",
+      "b_phi",
+      "phi_int",
+      "phi_slp",
+      "L_Omega",
+      "fac_dist"
     ),
     format = "df"
   )
 
   mu_slp <- mean(draws$mu_slp)
-  mu_quad <- mean(draws$mu_quad)
 
-  fac_dist_mean <- colMeans(as.matrix(draws[, grep("^fac_dist\\[", names(draws))]))
+  fac_dist_mean <- colMeans(as.matrix(draws[, grep(
+    "^fac_dist\\[",
+    names(draws)
+  )]))
 
   ni <- prep$ni
-  d  <- prep$d
+  d <- prep$d
   fac_dist_mat <- matrix(fac_dist_mean, nrow = 2, ncol = ni)
 
   b_mu_mean <- colMeans(as.matrix(draws[,
@@ -360,8 +367,7 @@ extract_factor_scores <- function(fit2, prep, ldf_step2, sex_label) {
         return(NULL)
       }
       eta_tp <- fac_gr_k[1] +
-        fac_gr_k[2] * age_obs$age_c[1] +
-        mu_quad * age_obs$age2_c[1]
+        fac_gr_k[2] * age_obs$age_c[1]
       tibble(
         person_idx = k,
         id = prep$ids[k],
@@ -380,13 +386,7 @@ extract_factor_scores <- function(fit2, prep, ldf_step2, sex_label) {
 # HELPER: MCMC diagnostics — convergence summary + trace/density plots
 # ---------------------------------------------------------------------------
 save_diagnostics <- function(fit, label, out_dir) {
-  key_params <- c(
-    "mu_slp",
-    "mu_quad",
-    "phi_int",
-    "phi_slp",
-    "Omega[1,2]"
-  )
+  key_params <- c("mu_slp", "phi_int", "phi_slp", "Omega[1,2]")
 
   # Divergence / tree-depth / E-BFMI summary
   diag <- fit$diagnostic_summary(quiet = TRUE)
@@ -489,34 +489,6 @@ save_diagnostics <- function(fit, label, out_dir) {
       height = 8,
       dpi = 150
     )
-
-    # Scatter: mu_slp vs mu_quad (growth trajectory shape)
-    if (all(c("mu_slp", "mu_quad") %in% draws_long$parameter)) {
-      scatter_df <- draws_long %>%
-        filter(parameter %in% c("mu_slp", "mu_quad")) %>%
-        pivot_wider(names_from = parameter, values_from = value)
-      p_scatter <- ggplot(
-        scatter_df,
-        aes(x = mu_slp, y = mu_quad, colour = factor(.chain))
-      ) +
-        geom_point(alpha = 0.15, size = 0.4) +
-        scale_colour_brewer(palette = "Set1") +
-        labs(
-          title = paste("Growth slope vs. quadratic:", label),
-          x = "μ_slope",
-          y = "μ_quadratic",
-          colour = "Chain"
-        ) +
-        theme_minimal(base_size = 11) +
-        theme(legend.position = "bottom")
-      ggsave(
-        file.path(out_dir, paste0("scatter_slp_quad_", label, ".png")),
-        p_scatter,
-        width = 6,
-        height = 5,
-        dpi = 150
-      )
-    }
   }
 
   invisible(summ)
@@ -602,7 +574,7 @@ if (file.exists(rds_fit1)) {
         iter_warmup = 1000,
         iter_sampling = 1000,
         adapt_delta = 0.95,
-        init = 0,
+        init = 0.1,
         output_dir = out_dir,
         refresh = 100,
         show_messages = TRUE,
@@ -675,7 +647,7 @@ if (file.exists(rds_fit2)) {
     iter_warmup = 1000,
     iter_sampling = 1000,
     adapt_delta = 0.95,
-    init = 0,
+    init = 0.1,
     refresh = 100,
     show_messages = TRUE,
     seed = 90025
@@ -826,23 +798,16 @@ ggsave(
 # ---------------------------------------------------------------------------
 # MEAN GROWTH TRAJECTORY PLOT
 # ---------------------------------------------------------------------------
-gp_means <- fit2$draws(variables = c("mu_slp", "mu_quad"), format = "df")
+gp_means <- fit2$draws(variables = "mu_slp", format = "df")
 age_grid <- seq(
   min(prep$dat_long$age),
   max(prep$dat_long$age),
   length.out = 100
 )
 age_c_grid <- age_grid - prep$age_mean
-age2_c_grid <- age_c_grid^2
 
 traj_draws <- map_dfr(seq_len(min(200, nrow(gp_means))), function(i) {
-  tibble(
-    age = age_grid,
-    eta_mean = gp_means$mu_slp[i] *
-      age_c_grid +
-      gp_means$mu_quad[i] * age2_c_grid,
-    draw = i
-  )
+  tibble(age = age_grid, eta_mean = gp_means$mu_slp[i] * age_c_grid, draw = i)
 })
 
 traj_summ <- traj_draws %>%

@@ -53,9 +53,8 @@ parameters {
   vector[mf]  n_diff;
   vector[mtv] n_diftv;
 
-  // fixed growth means (intercept mean = 0 for identification)
+  // fixed growth mean slope (intercept mean = 0 for identification)
   real mu_slp;
-  real mu_quad;   // fixed quadratic; individuals share same curvature
 
   // random intercept + slope SDs (2-factor; no random quadratic)
   real<lower=0> phi_int;
@@ -124,7 +123,6 @@ model {
   to_vector(b_phi) ~ normal(0, sigma_f);
 
   mu_slp  ~ normal(0, sigma_f);
-  mu_quad ~ normal(0, sigma_f);
 
   phi_int ~ normal(0, sigma_f);
   phi_slp ~ normal(0, sigma_f);
@@ -135,7 +133,7 @@ model {
     tau[it] ~ normal(0, 1.5);
   }
 
-  // growth factors: random intercept + slope, fixed quadratic mean
+  // growth factors: random intercept + slope, linear mean
   for (k in 1:ni) {
     vector[2] mu_eta;
     vector[2] sd_eta;
@@ -154,10 +152,8 @@ model {
     int it = itm[j];
     int pe = person[j];
 
-    // individual trajectory: random intercept + slope, shared quadratic
     real eta_j = fac_gr[1, pe]
-               + fac_gr[2, pe] * age_c[j]
-               + mu_quad        * age2_c[j];
+               + fac_gr[2, pe] * age_c[j];
 
     real nu  = np[it]
              + ndiff[it]  * (nfpreds > 0 ? xf[j, 1] : 0.0)
