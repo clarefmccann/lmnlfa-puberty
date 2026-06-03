@@ -439,7 +439,7 @@ if (file.exists(rds_fit1)) {
     iter_warmup    = 1000,
     iter_sampling  = 1000,
     adapt_delta    = 0.95,
-    init           = "0",
+    init           = 0,
     refresh        = 100,
     show_messages  = TRUE,
     seed           = 90025
@@ -486,7 +486,7 @@ if (file.exists(rds_fit2)) {
     iter_warmup    = 1000,
     iter_sampling  = 1000,
     adapt_delta    = 0.95,
-    init           = "0",
+    init           = 0,
     refresh        = 100,
     show_messages  = TRUE,
     seed           = 90025
