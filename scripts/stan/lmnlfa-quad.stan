@@ -60,7 +60,6 @@ parameters {
   // random intercept + slope SDs (2-factor; no random quadratic)
   real<lower=0> phi_int;
   real<lower=0> phi_slp;
-  real<lower=0> eti_sd;
 
   // covariate impact on growth factor means / SDs (2 growth factors)
   matrix[2, nfpreds] b_mu;
@@ -71,7 +70,6 @@ parameters {
 
   // non-centered random effects (2 × ni)
   matrix[2, ni] fac_dist;
-  matrix[d, ni] fac_eti_raw;
 
   // ordinal thresholds
   array[p] ordered[k_max - 1] tau;
@@ -86,8 +84,6 @@ transformed parameters {
   vector<lower=0>[2] phi_eta;
   phi_eta[1] = phi_int;
   phi_eta[2] = phi_slp;
-
-  matrix[d, ni] fac_eti = fac_eti_raw * eti_sd;
 
   {
     int tmp;
@@ -118,7 +114,6 @@ model {
   // priors
   lp      ~ normal(0, sigma_l);
   np      ~ normal(0, sigma_nu);
-  eti_sd  ~ normal(0, sigma_f);
 
   l_diff  ~ normal(0, sigma_di);
   l_diftv ~ normal(0, sigma_di);
@@ -136,7 +131,6 @@ model {
 
   L_Omega ~ lkj_corr_cholesky(sigma_cor);
   to_vector(fac_dist)    ~ normal(0, 1);
-  to_vector(fac_eti_raw) ~ normal(0, 1);
   for (it in 1:p) {
     tau[it] ~ normal(0, 1.5);
   }
@@ -163,8 +157,7 @@ model {
     // individual trajectory: random intercept + slope, shared quadratic
     real eta_j = fac_gr[1, pe]
                + fac_gr[2, pe] * age_c[j]
-               + mu_quad        * age2_c[j]
-               + fac_eti[ti, pe];
+               + mu_quad        * age2_c[j];
 
     real nu  = np[it]
              + ndiff[it]  * (nfpreds > 0 ? xf[j, 1] : 0.0)

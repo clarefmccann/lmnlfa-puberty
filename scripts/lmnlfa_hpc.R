@@ -292,7 +292,7 @@ select_dif <- function(fit1, prep, ci_level = 0.90) {
 }
 
 extract_growth_params <- function(fit2, sex_label) {
-  params <- c("mu_slp", "mu_quad", "phi_int", "phi_slp", "eti_sd", "Omega[1,2]")
+  params <- c("mu_slp", "mu_quad", "phi_int", "phi_slp", "Omega[1,2]")
   draws <- fit2$draws(variables = params, format = "df")
   posterior::summarise_draws(
     draws,
@@ -307,37 +307,20 @@ extract_growth_params <- function(fit2, sex_label) {
 extract_factor_scores <- function(fit2, prep, ldf_step2, sex_label) {
   draws <- fit2$draws(
     variables = c(
-      "mu_slp",
-      "mu_quad",
-      "b_mu",
-      "b_phi",
-      "phi_int",
-      "phi_slp",
-      "L_Omega",
-      "fac_dist",
-      "fac_eti_raw",
-      "eti_sd"
+      "mu_slp", "mu_quad", "b_mu", "b_phi",
+      "phi_int", "phi_slp", "L_Omega", "fac_dist"
     ),
     format = "df"
   )
 
   mu_slp <- mean(draws$mu_slp)
   mu_quad <- mean(draws$mu_quad)
-  eti_sd <- mean(draws$eti_sd)
 
-  fac_dist_mean <- colMeans(as.matrix(draws[, grep(
-    "^fac_dist\\[",
-    names(draws)
-  )]))
-  fac_eti_mean <- colMeans(as.matrix(draws[, grep(
-    "^fac_eti_raw\\[",
-    names(draws)
-  )]))
+  fac_dist_mean <- colMeans(as.matrix(draws[, grep("^fac_dist\\[", names(draws))]))
 
   ni <- prep$ni
-  d <- prep$d
+  d  <- prep$d
   fac_dist_mat <- matrix(fac_dist_mean, nrow = 2, ncol = ni)
-  fac_eti_mat <- matrix(fac_eti_mean * eti_sd, nrow = d, ncol = ni)
 
   b_mu_mean <- colMeans(as.matrix(draws[,
     grep("^b_mu\\[", names(draws)),
@@ -378,8 +361,7 @@ extract_factor_scores <- function(fit2, prep, ldf_step2, sex_label) {
       }
       eta_tp <- fac_gr_k[1] +
         fac_gr_k[2] * age_obs$age_c[1] +
-        mu_quad * age_obs$age2_c[1] +
-        fac_eti_mat[t, k]
+        mu_quad * age_obs$age2_c[1]
       tibble(
         person_idx = k,
         id = prep$ids[k],
@@ -403,7 +385,6 @@ save_diagnostics <- function(fit, label, out_dir) {
     "mu_quad",
     "phi_int",
     "phi_slp",
-    "eti_sd",
     "Omega[1,2]"
   )
 
