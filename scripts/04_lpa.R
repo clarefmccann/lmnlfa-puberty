@@ -54,7 +54,7 @@ data_dir <- Sys.getenv("DATA_DIR")
 if (!nzchar(data_dir) || !dir.exists(data_dir)) {
   data_dir <- file.path(
     root_path,
-    "projects/abcd-projs/abcd-data-release-6.0/cfm/physical-health/puberty"
+    "projects/abcd-projs/dissertation/study1/outputs"
   )
 }
 if (!dir.exists(data_dir)) {

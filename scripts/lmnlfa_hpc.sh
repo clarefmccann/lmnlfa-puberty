@@ -42,7 +42,7 @@ echo "============================================"
 module load R/4.2.2
 module load gcc/10.2.0
 
-export DATA_DIR="/u/project/silvers/data/ABCD/ABCD-release-6.0/cfm/physical-health/puberty"
+export DATA_DIR="/u/project/silvers/data/ABCD/cfm-dissertation-output/study1/outputs"
 export OUT_DIR="/u/project/silvers/data/ABCD/cfm-dissertation-output/study1/outputs"
 
 # Path to the CmdStan installation created by cmdstanr::install_cmdstan()

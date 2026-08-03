@@ -23,7 +23,7 @@ if (!nzchar(root_path)) {
 
 data_root <- file.path(
   root_path,
-  "projects/abcd-projs/abcd-data-release-6.0/nbdc-tools-data"
+  "projects/abcd-projs/abcd-data-release-7.0/phenotype"
 )
 if (!dir.exists(data_root)) {
   stop("Cannot locate nbdc-tools-data: ", data_root)
@@ -31,7 +31,7 @@ if (!dir.exists(data_root)) {
 
 out_root <- file.path(
   root_path,
-  "projects/abcd-projs/abcd-data-release-6.0/cfm/physical-health/puberty"
+  "projects/abcd-projs/dissertation/study1/outputs"
 )
 
 # ---------------------------------------------------------------------------
