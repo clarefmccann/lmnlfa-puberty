@@ -40,7 +40,7 @@ module load R/4.2.2
 module load gcc/10.2.0
 
 # Set data directory (edit this to match where your puberty CSVs live on H2)
-export DATA_DIR="/u/project/silvers/data/ABCD/cfm-dissertation-output/study1/outputs"
+export DATA_DIR="/u/home/c/clarefmc/projects/dissertation/study1/outputs"
 export OUT_DIR="/u/project/silvers/data/ABCD/cfm-dissertation-output/study1/outputs"
 
 # SGE copies the script to a temp location, so dirname "$0" doesn't work.

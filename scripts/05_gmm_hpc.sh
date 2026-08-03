@@ -34,7 +34,7 @@ echo "============================================"
 module load R/4.2.2
 module load gcc/10.2.0
 
-export DATA_DIR="/u/project/silvers/data/ABCD/cfm-dissertation-output/study1/outputs"
+export DATA_DIR="/u/home/c/clarefmc/projects/dissertation/study1/outputs"
 export OUT_DIR="/u/project/silvers/data/ABCD/cfm-dissertation-output/study1/outputs"
 
 SCRIPT_DIR="$SGE_O_WORKDIR"
