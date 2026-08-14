@@ -45,6 +45,7 @@ vars <- c(
   "ab_g_dyn__design_site",
   "ph_y_anthr__height_mean", # inches
   "ph_y_anthr__weight_mean", # lbs
+  "ph_y_anthr__waist_mean", # inches
   # PDS items — parent report
   "ph_p_pds_001",
   "ph_p_pds_002",
@@ -192,6 +193,7 @@ data <- raw %>%
     site = ab_g_dyn__design_site,
     height_in = ph_y_anthr__height_mean,
     weight_lb = ph_y_anthr__weight_mean,
+    waist_in = ph_y_anthr__waist_mean,
     peta_p = ph_p_pds_001,
     petb_p = ph_p_pds_002,
     petc_p = ph_p_pds_003,
@@ -223,6 +225,10 @@ data <- raw %>%
 # BMI
 data <- data %>%
   mutate(bmi = 703 * weight_lb / height_in^2)
+
+# waist-to-height ratio (same units, inches, so no conversion needed)
+data <- data %>%
+  mutate(whtr = waist_in / height_in)
 
 # age-standardized BMI z-score within sex
 data <- data %>%
@@ -387,6 +393,8 @@ covariate_cols <- c(
   "site",
   "bmi",
   "bmi_z",
+  "waist_in",
+  "whtr",
   "caregiver",
   "caregiver_switched",
   "n_cg_switches",
