@@ -106,6 +106,10 @@ if (!nzchar(script_dir)) {
     error = function(e) "scripts"
   )
 }
+palette_file <- file.path(script_dir, "color_palette.R")
+if (!file.exists(palette_file)) palette_file <- file.path("scripts", "color_palette.R")
+source(palette_file)
+
 stan_file <- file.path(script_dir, "stan", "lmnlfa-quad-tanhcor.stan")
 if (!file.exists(stan_file)) {
   stan_file <- file.path("scripts", "stan", "lmnlfa-quad-tanhcor.stan")
@@ -369,16 +373,18 @@ save_diagnostics <- function(fit, label, out_dir) {
   if (!is.null(draws_long)) {
     p_trace <- ggplot(
       draws_long,
-      aes(x = .iteration, y = value, colour = factor(.chain))
+      aes(x = .iteration, y = value, colour = factor(.chain), linetype = factor(.chain))
     ) +
       geom_line(alpha = 0.6, linewidth = 0.25) +
       facet_wrap(~parameter, scales = "free_y", ncol = 2) +
-      scale_colour_brewer(palette = "Set1") +
+      scale_colour_manual(values = pal_chains) +
+      scale_linetype_manual(values = pal_linetypes_chains) +
       labs(
         title = paste("Trace plots:", label),
         x = "Iteration",
         y = "Value",
-        colour = "Chain"
+        colour = "Chain",
+        linetype = "Chain"
       ) +
       theme_minimal(base_size = 11) +
       theme(legend.position = "bottom")
@@ -392,16 +398,20 @@ save_diagnostics <- function(fit, label, out_dir) {
 
     p_dens <- ggplot(
       draws_long,
-      aes(x = value, fill = factor(.chain))
+      aes(x = value, fill = factor(.chain), colour = factor(.chain), linetype = factor(.chain))
     ) +
-      geom_density(alpha = 0.35) +
+      geom_density(alpha = 0.35, linewidth = 0.6) +
       facet_wrap(~parameter, scales = "free", ncol = 2) +
-      scale_fill_brewer(palette = "Set1") +
+      scale_fill_manual(values = pal_chains) +
+      scale_colour_manual(values = pal_chains) +
+      scale_linetype_manual(values = pal_linetypes_chains) +
       labs(
         title = paste("Posterior densities:", label),
         x = "Value",
         y = "Density",
-        fill = "Chain"
+        fill = "Chain",
+        colour = "Chain",
+        linetype = "Chain"
       ) +
       theme_minimal(base_size = 11) +
       theme(legend.position = "bottom")

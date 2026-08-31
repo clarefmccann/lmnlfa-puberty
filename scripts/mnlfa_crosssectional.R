@@ -80,15 +80,21 @@ if (!nzchar(out_base)) {
 out_dir <- file.path(out_base, "mnlfa_crosssectional")
 dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
 
+# SGE copies the job script, so use SGE_O_WORKDIR there. For a direct
+# `Rscript path/to/this.R` invocation (e.g. running interactively from
+# inside scripts/), sys.frames()[[1]]$ofile is unset -- that trick only
+# works when a script is source()'d, not when Rscript runs it directly --
+# so fall back to parsing the --file= argument Rscript always passes, which
+# resolves correctly regardless of the current working directory.
 script_dir <- Sys.getenv("SGE_O_WORKDIR")
 if (!nzchar(script_dir)) {
-  script_dir <- tryCatch(
-    {
-      ofile <- sys.frames()[[1]]$ofile
-      if (is.null(ofile)) "scripts" else dirname(ofile)
-    },
-    error = function(e) "scripts"
-  )
+  cmd_args <- commandArgs(trailingOnly = FALSE)
+  file_arg <- sub("^--file=", "", cmd_args[grep("^--file=", cmd_args)])
+  script_dir <- if (length(file_arg) > 0) {
+    dirname(normalizePath(file_arg[1]))
+  } else {
+    "scripts"
+  }
 }
 stan_file <- file.path(script_dir, "stan", "mnlfa-crosssectional.stan")
 if (!file.exists(stan_file)) {
@@ -129,16 +135,40 @@ build_crosssectional_data <- function(
 
   covars <- c("id", "wave", "age", "race", "whtr")
 
+  # Plausibility filter for WHtR: the raw waist circumference variable has a
+  # small number of clearly erroneous values (e.g. a 14-year-old with a
+  # 150-inch waist, or others under 16 inches) that would otherwise badly
+  # distort the mean/SD used to center this covariate. 0.25-0.75 comfortably
+  # covers the realistic adolescent range with margin.
+  whtr_min <- 0.25
+  whtr_max <- 0.75
+
   clean_reporter <- function(df, reporter_label) {
     df %>%
       select(all_of(covars), all_of(ordinal_items)) %>%
-      filter(!is.na(age), !is.na(race), !is.na(whtr)) %>%
+      filter(
+        !is.na(age),
+        !is.na(race),
+        !is.na(whtr),
+        whtr >= whtr_min,
+        whtr <= whtr_max
+      ) %>%
       filter(if_all(
         all_of(ordinal_items),
         ~ !is.na(.) & as.integer(.) %in% 1:4
       )) %>%
       mutate(reporter = reporter_label)
   }
+
+  n_whtr_implausible <- sum(
+    bind_rows(parent_df, youth_df)$whtr < whtr_min |
+      bind_rows(parent_df, youth_df)$whtr > whtr_max,
+    na.rm = TRUE
+  )
+  cat(
+    "  Rows excluded for implausible WHtR (outside", whtr_min, "-", whtr_max,
+    "):", n_whtr_implausible, "\n"
+  )
 
   candidates <- bind_rows(
     clean_reporter(parent_df, "parent"),
@@ -320,25 +350,25 @@ saveRDS(stan_data, file.path(out_dir, paste0("stan_data_", sx, ".rds")))
 cat("\nstan_data saved to:", file.path(out_dir, paste0("stan_data_", sx, ".rds")), "\n")
 
 # ---------------------------------------------------------------------------
-# FIT -- NOT RUN HERE. Uncomment and run yourself.
+# FIT
 # ---------------------------------------------------------------------------
-# fit <- stan_model$sample(
-#   data = stan_data,
-#   chains = 4,
-#   parallel_chains = 4,
-#   iter_warmup = 1000,
-#   iter_sampling = 1000,
-#   adapt_delta = 0.9,
-#   init = 0.1,
-#   refresh = 100,
-#   show_messages = TRUE,
-#   seed = 90025
-# )
-# fit$save_object(file.path(out_dir, paste0("fit_crosssectional_", sx, ".rds")))
-#
-# diag <- fit$diagnostic_summary(quiet = TRUE)
-# cat("Divergences:", diag$num_divergent, " Max treedepth hits:", diag$num_max_treedepth, "\n")
-# print(fit$summary(variables = c("b_mu", "b_phi", "phi0")), digits = 3)
+fit <- stan_model$sample(
+  data = stan_data,
+  chains = 4,
+  parallel_chains = 4,
+  iter_warmup = 1000,
+  iter_sampling = 1000,
+  adapt_delta = 0.9,
+  init = 0.1,
+  refresh = 100,
+  show_messages = TRUE,
+  seed = 90025
+)
+fit$save_object(file.path(out_dir, paste0("fit_crosssectional_", sx, ".rds")))
 
-cat("\nData build + compile complete. Fit call is commented out --", "\n")
-cat("uncomment the block above and run this script yourself to sample.\n")
+diag <- fit$diagnostic_summary(quiet = TRUE)
+cat("Divergences:", diag$num_divergent, " Max treedepth hits:", diag$num_max_treedepth, "\n")
+print(fit$summary(variables = c("b_mu", "b_phi", "phi0")), digits = 3)
+
+cat("\nAll outputs written to:", out_dir, "\n")
+cat("Done:", sx, "\n")

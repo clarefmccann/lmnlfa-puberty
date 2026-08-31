@@ -79,6 +79,10 @@ script_dir <- tryCatch(
   },
   error = function(e) "scripts"
 )
+palette_file <- file.path(script_dir, "color_palette.R")
+if (!file.exists(palette_file)) palette_file <- file.path("scripts", "color_palette.R")
+source(palette_file)
+
 stan_file <- file.path(script_dir, "stan", "mnlfa-static.stan")
 if (!file.exists(stan_file)) {
   stan_file <- file.path("scripts", "stan", "mnlfa-static.stan")
@@ -292,7 +296,7 @@ write.csv(
 )
 
 p_eta <- ggplot(eta_df, aes(x = age, y = eta)) +
-  geom_point(alpha = 0.15, size = 0.6, colour = "#2166ac") +
+  geom_point(alpha = 0.15, size = 0.6, colour = pal_primary) +
   geom_smooth(method = "loess", se = TRUE, colour = "black") +
   labs(
     title = paste0("Static MNLFA factor scores vs. age — ", sx),

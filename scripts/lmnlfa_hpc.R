@@ -82,6 +82,10 @@ script_dir <- Sys.getenv("SGE_O_WORKDIR")
 if (!nzchar(script_dir)) {
   script_dir <- "scripts"
 }
+palette_file <- file.path(script_dir, "color_palette.R")
+if (!file.exists(palette_file)) palette_file <- file.path("scripts", "color_palette.R")
+source(palette_file)
+
 stan_file <- file.path(script_dir, "stan", "lmnlfa-quad.stan")
 if (!file.exists(stan_file)) {
   stan_file <- file.path("scripts", "stan", "lmnlfa-quad.stan")
@@ -445,16 +449,18 @@ save_diagnostics <- function(fit, label, out_dir) {
     # Trace plots
     p_trace <- ggplot(
       draws_long,
-      aes(x = .iteration, y = value, colour = factor(.chain))
+      aes(x = .iteration, y = value, colour = factor(.chain), linetype = factor(.chain))
     ) +
       geom_line(alpha = 0.6, linewidth = 0.25) +
       facet_wrap(~parameter, scales = "free_y", ncol = 2) +
-      scale_colour_brewer(palette = "Set1") +
+      scale_colour_manual(values = pal_chains) +
+      scale_linetype_manual(values = pal_linetypes_chains) +
       labs(
         title = paste("Trace plots:", label),
         x = "Iteration",
         y = "Value",
-        colour = "Chain"
+        colour = "Chain",
+        linetype = "Chain"
       ) +
       theme_minimal(base_size = 11) +
       theme(legend.position = "bottom")
@@ -469,16 +475,20 @@ save_diagnostics <- function(fit, label, out_dir) {
     # Posterior density plots (chains overlaid)
     p_dens <- ggplot(
       draws_long,
-      aes(x = value, fill = factor(.chain))
+      aes(x = value, fill = factor(.chain), colour = factor(.chain), linetype = factor(.chain))
     ) +
-      geom_density(alpha = 0.35) +
+      geom_density(alpha = 0.35, linewidth = 0.6) +
       facet_wrap(~parameter, scales = "free", ncol = 2) +
-      scale_fill_brewer(palette = "Set1") +
+      scale_fill_manual(values = pal_chains) +
+      scale_colour_manual(values = pal_chains) +
+      scale_linetype_manual(values = pal_linetypes_chains) +
       labs(
         title = paste("Posterior densities:", label),
         x = "Value",
         y = "Density",
-        fill = "Chain"
+        fill = "Chain",
+        colour = "Chain",
+        linetype = "Chain"
       ) +
       theme_minimal(base_size = 11) +
       theme(legend.position = "bottom")
@@ -715,7 +725,7 @@ if (!is.null(scores)) {
     scores %>% filter(person_idx %in% samp_ids),
     aes(x = age, y = eta, group = id)
   ) +
-    geom_line(alpha = 0.15, linewidth = 0.3, colour = "#2166ac") +
+    geom_line(alpha = 0.15, linewidth = 0.3, colour = pal_primary) +
     geom_smooth(
       aes(group = NULL),
       method = "loess",
@@ -751,16 +761,18 @@ write.csv(
 
 p_lam <- ggplot(
   ip,
-  aes(x = age, y = lam, colour = reporter, linetype = base_item)
+  aes(x = age, y = lam, colour = reporter, linetype = reporter)
 ) +
   geom_line(linewidth = 1) +
-  scale_colour_manual(values = c(Parent = "#2166ac", Youth = "#d73027")) +
+  facet_wrap(~base_item, ncol = 2) +
+  scale_colour_manual(values = c(Parent = pal_two[1], Youth = pal_two[2])) +
+  scale_linetype_manual(values = c(Parent = "solid", Youth = "dashed")) +
   labs(
     title = paste0("Item loadings by age — ", sx),
     x = "Age (years)",
     y = "Loading (λ)",
     colour = "Reporter",
-    linetype = "Item"
+    linetype = "Reporter"
   ) +
   theme_minimal(base_size = 13) +
   theme(legend.position = "bottom")
@@ -774,16 +786,18 @@ ggsave(
 
 p_nu <- ggplot(
   ip,
-  aes(x = age, y = nu, colour = reporter, linetype = base_item)
+  aes(x = age, y = nu, colour = reporter, linetype = reporter)
 ) +
   geom_line(linewidth = 1) +
-  scale_colour_manual(values = c(Parent = "#2166ac", Youth = "#d73027")) +
+  facet_wrap(~base_item, ncol = 2) +
+  scale_colour_manual(values = c(Parent = pal_two[1], Youth = pal_two[2])) +
+  scale_linetype_manual(values = c(Parent = "solid", Youth = "dashed")) +
   labs(
     title = paste0("Item intercepts by age — ", sx),
     x = "Age (years)",
     y = "Intercept (ν)",
     colour = "Reporter",
-    linetype = "Item"
+    linetype = "Reporter"
   ) +
   theme_minimal(base_size = 13) +
   theme(legend.position = "bottom")
@@ -822,10 +836,10 @@ traj_summ <- traj_draws %>%
 p_traj <- ggplot(traj_summ, aes(x = age)) +
   geom_ribbon(
     aes(ymin = eta_lo, ymax = eta_hi),
-    fill = "#4393c3",
-    alpha = 0.25
+    fill = pal_primary_fill,
+    alpha = 0.35
   ) +
-  geom_line(aes(y = eta_med), colour = "#2166ac", linewidth = 1.2) +
+  geom_line(aes(y = eta_med), colour = pal_primary, linewidth = 1.2) +
   geom_hline(yintercept = 0, linetype = "dashed", colour = "grey60") +
   labs(
     title = paste0("Mean puberty growth trajectory — ", sx),

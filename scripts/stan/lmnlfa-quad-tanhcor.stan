@@ -1,4 +1,13 @@
 // lmnlfa-quad-tanhcor.stan
+// NOTE ON THE NAME: despite "quad", this model (like lmnlfa-quad.stan
+// before it) has never implemented a quadratic growth term -- age2_c is
+// declared in the data block but not referenced in any equation below.
+// Growth is linear in age_c only. Left un-renamed here since this file is
+// already referenced elsewhere (lmnlfa_growth_only_tanhcor.R,
+// lmnlfa_growth_only_tanhcor_hpc.sh); the newer informant-DIF variant
+// (lmnlfa-linear-tanhcor-informant.stan) drops age2_c entirely and is
+// named accurately.
+//
 // Identical to lmnlfa-quad.stan EXCEPT for how the intercept/slope
 // correlation is parameterized.
 //

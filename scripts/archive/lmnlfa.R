@@ -1,728 +1,820 @@
+## lmnlfa.R
+## Longitudinal Moderated Nonlinear Factor Analysis (LMNLFA)
+## Two-step workflow following Chen & Bauer (2024, Psych Methods).
+##
+## Measurement model: PDS items from parent AND youth reporters, ordinal 1–4,
+##   loading on a single puberty latent factor (justified by high reporter
+##   correlation from M2 cross-reporter CFA in 02_psychometrics.R).
+##
+## Growth model: Quadratic latent growth in puberty as a function of age
+##   (centered). Baseline age is a time-invariant predictor of growth factor
+##   distribution. Analyses are sex-stratified (females / males run separately).
+##
+## Two-step DIF workflow:
+##   Step 1 — All items have potential time-varying DIF by age.
+##             Identify significant DIF via 90% posterior CI excluding 0.
+##   Step 2 — Refit with only identified DIF items, weakly informative priors.
+##
+## Inputs:   female/male parent and youth long CSVs (from 00_data_foundation.R)
+## Stan:     scripts/stan/lmnlfa-quad.stan
+## Outputs:  dif_selection.csv, growth_params.csv, factor_scores.csv,
+##           item_params_by_age_*.png, growth_trajectories_*.png
+
 pacman::p_load(
-  "rstan",
-  "posterior",
-  "dplyr",
-  "tidyr",
-  "purrr",
-  "readr",
-  "lavaan",
-  "semTools",
-  "ggplot2",
-  "NBDCtools"
+  dplyr,
+  tidyr,
+  tibble,
+  purrr,
+  ggplot2,
+  posterior,
+  install = TRUE
 )
+# cmdstanr is loaded separately to allow graceful failure
+if (!requireNamespace("cmdstanr", quietly = TRUE)) {
+  stop(
+    "cmdstanr is required. Install with:\n",
+    "  install.packages('cmdstanr', repos = c('https://mc-stan.org/r-packages/', getOption('repos')))\n",
+    "  cmdstanr::install_cmdstan()"
+  )
+}
+library(cmdstanr)
 
 set.seed(90025)
 
-# quick-run toggle
-test_mode <- TRUE
-test_n_ids <- 250
-
+# ---------------------------------------------------------------------------
+# PATHS
+# ---------------------------------------------------------------------------
 root_path <- Sys.getenv("HOME_DIR")
 if (!nzchar(root_path)) {
   root_path <- Sys.getenv("HOME")
 }
-proj_path <- here::here()
-data_root <- file.path(
-  root_path,
-  "projects/abcd-projs/abcd-data-release-6.0/nbdc-tools-data"
-)
-if (!dir.exists(data_root)) {
-  alt_data_root <- file.path(
+
+data_dir <- Sys.getenv("DATA_DIR")
+if (!nzchar(data_dir) || !dir.exists(data_dir)) {
+  data_dir <- file.path(
     root_path,
-    "Library/CloudStorage/Box-Box/everything/projects/abcd-projs/abcd-data-release-6.0/nbdc-tools-data"
-  )
-  if (dir.exists(alt_data_root)) {
-    data_root <- alt_data_root
-  }
-}
-if (!dir.exists(data_root)) {
-  stop(
-    sprintf("Could not find nbdc-tools-data directory at '%s'.", data_root),
-    call. = FALSE
+    "projects/abcd-projs/abcd-data-release-6.0/cfm/physical-health/puberty"
   )
 }
+if (!dir.exists(data_dir)) {
+  stop("Cannot locate data directory: ", data_dir)
+}
 
-# -----------------------------------------------------------------------------
-# 2. DATA LOADING AND PREPARATION
-# -----------------------------------------------------------------------------
+out_base <- Sys.getenv("OUT_DIR")
+if (!nzchar(out_base)) {
+  out_base <- file.path(
+    root_path,
+    "projects/abcd-projs/dissertation/study1/outputs"
+  )
+}
+out_dir <- file.path(out_base, "lmnlfa")
+dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
 
-# use nbdctools to load in data (caregiver info = )
-
-vars <- c(
-  "ab_g_dyn__visit_age",
-  "ab_g_stc__cohort_sex",
-  "ph_y_anthr__waist_001",
-  "ph_y_anthr__height_mean",
-  "ab_g_dyn__visit__day1_inform",
-  "ab_g_stc__cohort_ethnrace__mhisp",
-  "ph_p_pds_001",
-  "ph_p_pds_002",
-  "ph_p_pds_003",
-  "ph_p_pds__f_001",
-  "ph_p_pds__f_002",
-  "ph_p_pds__m_001",
-  "ph_p_pds__m_002",
-  "ph_y_pds_001",
-  "ph_y_pds_002",
-  "ph_y_pds_003",
-  "ph_y_pds__f_001",
-  "ph_y_pds__f_002",
-  "ph_y_pds__m_001",
-  "ph_y_pds__m_002"
+script_dir <- tryCatch(
+  {
+    ofile <- sys.frames()[[1]]$ofile
+    if (is.null(ofile)) "scripts" else dirname(ofile)
+  },
+  error = function(e) "scripts"
 )
-
-
-data <- create_dataset(
-  dir_data = data_root,
-  study = "abcd",
-  vars = vars,
-  value_to_na = TRUE,
-  bind_shadow = TRUE
-)
-
-prepare_observed_puberty_lmnlfa_long <- function(data) {
-  sex_is_male <- function(x) {
-    x_chr <- tolower(trimws(as.character(x)))
-    x_chr %in% c("1", "m", "male", "boy")
-  }
-  first_non_missing <- function(x) {
-    x <- x[!is.na(x)]
-    if (length(x) == 0) {
-      return(NA_real_)
-    }
-    x[1]
-  }
-
-  base <- data %>%
-    transmute(
-      id = participant_id,
-      wave = session_id,
-      age = as.numeric(ab_g_dyn__visit_age),
-      sex_male = sex_is_male(ab_g_stc__cohort_sex),
-      race = as.numeric(ab_g_stc__cohort_ethnrace__mhisp),
-      bmi = as.numeric(ph_y_anthr__waist_001) /
-        as.numeric(ph_y_anthr__height_mean),
-      ph_p_pds_001 = as.numeric(ph_p_pds_001),
-      ph_p_pds_002 = as.numeric(ph_p_pds_002),
-      ph_p_pds_003 = as.numeric(ph_p_pds_003),
-      ph_p_pds__f_001 = as.numeric(ph_p_pds__f_001),
-      ph_p_pds__f_002 = as.numeric(ph_p_pds__f_002),
-      ph_p_pds__m_001 = as.numeric(ph_p_pds__m_001),
-      ph_p_pds__m_002 = as.numeric(ph_p_pds__m_002),
-      ph_y_pds_001 = as.numeric(ph_y_pds_001),
-      ph_y_pds_002 = as.numeric(ph_y_pds_002),
-      ph_y_pds_003 = as.numeric(ph_y_pds_003),
-      ph_y_pds__f_001 = as.numeric(ph_y_pds__f_001),
-      ph_y_pds__f_002 = as.numeric(ph_y_pds__f_002),
-      ph_y_pds__m_001 = as.numeric(ph_y_pds__m_001),
-      ph_y_pds__m_002 = as.numeric(ph_y_pds__m_002)
-    ) %>%
-    filter(!is.na(id), !is.na(age))
-
-  occ <- base %>%
-    mutate(
-      p4 = if_else(sex_male, ph_p_pds__m_001, ph_p_pds__f_001),
-      p5 = if_else(sex_male, ph_p_pds__m_002, ph_p_pds__f_002),
-      y4 = if_else(sex_male, ph_y_pds__m_001, ph_y_pds__f_001),
-      y5 = if_else(sex_male, ph_y_pds__m_002, ph_y_pds__f_002)
-    ) %>%
-    select(
-      id,
-      wave,
-      age,
-      race,
-      bmi,
-      ph_p_pds_001,
-      ph_p_pds_002,
-      ph_p_pds_003,
-      p4,
-      p5,
-      ph_y_pds_001,
-      ph_y_pds_002,
-      ph_y_pds_003,
-      y4,
-      y5
-    ) %>%
-    distinct(id, wave, .keep_all = TRUE) %>%
-    group_by(id) %>%
-    arrange(age, .by_group = TRUE) %>%
-    mutate(
-      time = dplyr::dense_rank(age),
-      base_age = first(age),
-      race_id = first_non_missing(race),
-      bmi_id = first_non_missing(bmi),
-      age_c = age - 12,
-      age2_c = age_c^2
-    ) %>%
-    ungroup()
-
-  occ %>%
-    pivot_longer(
-      cols = c(
-        ph_p_pds_001,
-        ph_p_pds_002,
-        ph_p_pds_003,
-        p4,
-        p5,
-        ph_y_pds_001,
-        ph_y_pds_002,
-        ph_y_pds_003,
-        y4,
-        y5
-      ),
-      names_to = "item_name",
-      values_to = "resp_raw"
-    ) %>%
-    mutate(
-      item = recode(
-        item_name,
-        ph_p_pds_001 = 1L,
-        ph_p_pds_002 = 2L,
-        ph_p_pds_003 = 3L,
-        p4 = 4L,
-        p5 = 5L,
-        ph_y_pds_001 = 6L,
-        ph_y_pds_002 = 7L,
-        ph_y_pds_003 = 8L,
-        y4 = 9L,
-        y5 = 10L
-      ),
-      resp = case_when(
-        item %in%
-          c(1L, 2L, 3L, 4L, 6L, 7L, 8L, 9L) &
-          resp_raw %in% 1:4 ~ as.integer(resp_raw),
-        item %in% c(5L, 10L) & resp_raw %in% c(0, 1) ~ as.integer(resp_raw),
-        item %in% c(5L, 10L) & !is.na(resp_raw) ~ as.integer(resp_raw > 1),
-        TRUE ~ NA_integer_
-      )
-    ) %>%
-    filter(!is.na(resp)) %>%
-    select(
-      id, time, age, age_c, age2_c, item, resp,
-      race = race_id, bmi = bmi_id, base_age
-    )
+stan_file <- file.path(script_dir, "stan", "lmnlfa-quad.stan")
+if (!file.exists(stan_file)) {
+  stan_file <- file.path("scripts", "stan", "lmnlfa-quad.stan")
+}
+if (!file.exists(stan_file)) {
+  stop("Cannot find lmnlfa-quad.stan: ", stan_file)
 }
 
+# ---------------------------------------------------------------------------
+# LOAD
+# ---------------------------------------------------------------------------
+female_parent <- read.csv(file.path(data_dir, "female_parent_long.csv"))
+female_youth <- read.csv(file.path(data_dir, "female_youth_long.csv"))
+male_parent <- read.csv(file.path(data_dir, "male_parent_long.csv"))
+male_youth <- read.csv(file.path(data_dir, "male_youth_long.csv"))
 
-mc_cores <- parallel::detectCores()
-if (is.na(mc_cores)) {
-  mc_cores <- 1L
-}
-options(mc.cores = mc_cores)
-rstan_options(auto_write = TRUE)
+wave_order <- c("bl", "fu1", "fu2", "fu3", "fu4", "fu5", "fu6")
 
-# --- helpers ---
-logistic_15 <- function(age, floor = 1, ceiling = 5, alpha, t0) {
-  floor + (ceiling - floor) / (1 + exp(-alpha * (age - t0)))
-}
+# ---------------------------------------------------------------------------
+# STAN MODEL COMPILATION
+# ---------------------------------------------------------------------------
+stan_model <- cmdstan_model(stan_file)
 
-get_script_dir <- function() {
-  normalize_local_path <- function(path) {
-    if (is.null(path) || !nzchar(path)) {
-      return(NULL)
-    }
-
-    if (grepl("^file://", path, ignore.case = TRUE)) {
-      path <- utils::URLdecode(sub("^file://", "", path, ignore.case = TRUE))
-    }
-
-    path <- path.expand(path)
-
-    if (!file.exists(path)) {
-      return(NULL)
-    }
-
-    normalizePath(path, mustWork = TRUE)
-  }
-
-  cmd_args <- commandArgs(trailingOnly = FALSE)
-  file_arg <- grep("^--file=", cmd_args, value = TRUE)
-  if (length(file_arg) > 0) {
-    file_path <- normalize_local_path(sub("^--file=", "", file_arg[1]))
-    if (!is.null(file_path)) {
-      return(dirname(file_path))
-    }
-  }
-
-  for (frame_idx in rev(seq_len(sys.nframe()))) {
-    ofile <- sys.frame(frame_idx)$ofile
-    file_path <- normalize_local_path(ofile)
-    if (!is.null(file_path)) {
-      return(dirname(file_path))
-    }
-  }
-
-  NULL
-}
-
-default_script_dir <- get_script_dir()
-
-resolve_input_path <- function(path) {
-  if (file.exists(path)) {
-    return(normalizePath(path, mustWork = TRUE))
-  }
-
-  script_dir <- default_script_dir
-  if (is.null(script_dir)) {
-    script_dir <- get_script_dir()
-  }
-  if (!is.null(script_dir)) {
-    script_path <- file.path(script_dir, path)
-    if (file.exists(script_path)) {
-      return(normalizePath(script_path, mustWork = TRUE))
-    }
-  }
-
-  stop(
-    sprintf(
-      paste(
-        "Could not find input file '%s'.",
-        "Checked relative to getwd() = '%s'%s."
-      ),
-      path,
-      normalizePath(getwd(), mustWork = TRUE),
-      if (is.null(script_dir)) {
-        ""
-      } else {
-        sprintf(" and script_dir = '%s'", script_dir)
-      }
-    ),
-    call. = FALSE
-  )
-}
-
-simulate_puberty_lmnfa_long <- function(
-  n,
-  max_waves = 7,
-  age_min = 9.5,
-  age_max = 15.5,
-  floor = 1,
-  ceiling = 5,
-  t0_range = c(11, 13),
-  alpha_range = c(0.7, 0.95),
-  p_race = 0.30,
-  bmi_mu = 25,
-  bmi_sd = 5,
-  base_age_mu = 11.5,
-  base_age_sd = 1.0,
-  p_items = 10,
-  ordinal_items = c(1:4, 6:9),
-  binary_items = c(5, 10),
-  loading_mu = 1.0,
-  loading_sd = 0.15,
-  resid_sd = 1.0,
-  mean_waves_obs = 4
+# ---------------------------------------------------------------------------
+# HELPER: build long-format data for Stan
+# ---------------------------------------------------------------------------
+# Returns a list with:
+#   dat_long    — tidy long df (one row per person × wave × item)
+#   item_names  — ordered item labels (length p)
+#   ids         — ordered person IDs (length ni)
+#   age_mean    — centering value
+#   ni, d, p, nobs, is_binary, k_items, k_max
+build_lmnlfa_data <- function(
+  parent_df,
+  youth_df,
+  sex_label,
+  ordinal_items = c("peta", "petb", "petc", "petd")
 ) {
-  stopifnot(p_items == 10)
+  cat("\n=== Building LMNLFA data |", sex_label, "===\n")
 
-  id <- 1:n
+  parent_sel <- parent_df %>%
+    select(id, wave, age, any_of(ordinal_items)) %>%
+    rename_with(~ paste0(., "_p"), any_of(ordinal_items))
 
-  mods <- tibble(
-    id = id,
-    race = rbinom(n, 1, p_race),
-    bmi = rnorm(n, bmi_mu, bmi_sd),
-    base_age = rnorm(n, base_age_mu, base_age_sd)
-  )
+  youth_sel <- youth_df %>%
+    select(id, wave, any_of(ordinal_items)) %>%
+    rename_with(~ paste0(., "_y"), any_of(ordinal_items))
 
-  pars <- tibble(
-    id = id,
-    t0 = runif(n, t0_range[1], t0_range[2]),
-    alpha = runif(n, alpha_range[1], alpha_range[2])
-  )
+  item_cols <- paste0(ordinal_items, "_p")
+  item_cols_y <- paste0(ordinal_items, "_y")
+  all_item_cols <- c(item_cols, item_cols_y)
 
-  w_obs <- pmin(max_waves, pmax(1, rpois(n, lambda = mean_waves_obs)))
+  dat <- inner_join(parent_sel, youth_sel, by = c("id", "wave")) %>%
+    filter(!is.na(age)) %>%
+    mutate(wave = factor(wave, levels = wave_order)) %>%
+    # keep rows where all ordinal items are valid
+    filter(if_all(
+      all_of(all_item_cols),
+      ~ !is.na(.) & as.integer(.) %in% 1:4
+    )) %>%
+    arrange(id, wave)
 
-  occ <- map2_dfr(id, w_obs, function(i, w) {
-    tibble(
-      id = i,
-      time = 1:w,
-      age = sort(runif(w, age_min, age_max))
-    )
-  }) %>%
-    left_join(mods, by = "id") %>%
-    left_join(pars, by = "id") %>%
+  if (nrow(dat) < 500) {
+    stop("Insufficient data for ", sex_label)
+  }
+
+  # Integer indices
+  ids <- sort(unique(dat$id))
+  age_mean <- mean(dat$age, na.rm = TRUE)
+
+  dat <- dat %>%
     mutate(
-      eta = logistic_15(
-        age,
-        floor = floor,
-        ceiling = ceiling,
-        alpha = alpha,
-        t0 = t0
-      ),
-      age_c = age - 12,
+      person_idx = match(id, ids),
+      time_idx = as.integer(wave),
+      age_c = age - age_mean,
       age2_c = age_c^2
     )
 
-  lambdas <- rnorm(p_items, loading_mu, loading_sd)
-  thr_14 <- c(-0.8, 0.0, 0.8)
-
-  occ %>%
-    crossing(item = 1:p_items) %>%
-    mutate(
-      lambda = lambdas[item],
-      y_star = lambda * eta + rnorm(n(), 0, resid_sd),
-      resp = case_when(
-        item %in% ordinal_items ~ as.integer(cut(
-          y_star,
-          breaks = c(-Inf, thr_14, Inf),
-          labels = FALSE
-        )),
-        item %in% binary_items ~ as.integer(y_star > 0),
-        TRUE ~ NA_integer_
-      )
-    ) %>%
+  # Pivot to long (one row per obs)
+  dat_long <- dat %>%
     select(
       id,
-      time,
-      age,
+      person_idx,
+      time_idx,
       age_c,
       age2_c,
-      item,
-      resp,
-      race,
-      bmi,
-      base_age,
-      t0,
-      alpha
-    )
-}
-
-make_ldf_simple <- function(
-  P = 10,
-  dif_time_items = c(1, 2, 3),
-  dif_inv_items = c(6, 7, 8)
-) {
-  Ldf <- matrix(0, nrow = P, ncol = 2)
-  Ldf[dif_time_items, 1] <- 1
-  Ldf[dif_inv_items, 2] <- 1
-  Ldf
-}
-
-build_fa_data <- function(dat_long, Ldf) {
-  first_non_missing <- function(x) {
-    x <- x[!is.na(x)]
-    if (length(x) == 0) {
-      return(NA_real_)
-    }
-    x[1]
-  }
-
-  dat_long <- dat_long %>%
-    mutate(
-      person = as.integer(factor(id)),
-      itm = as.integer(factor(item, levels = sort(unique(item)))),
-      time = as.integer(factor(time, levels = sort(unique(time))))
-    )
-
-  person_tbl <- dat_long %>%
-    group_by(id, person) %>%
-    summarise(
-      race = first_non_missing(race),
-      bmi = first_non_missing(bmi),
-      base_age = first_non_missing(base_age),
-      .groups = "drop"
+      age,
+      all_of(all_item_cols)
     ) %>%
-    filter(!is.na(race), !is.na(bmi), !is.na(base_age)) %>%
-    arrange(person) %>%
+    pivot_longer(
+      cols = all_of(all_item_cols),
+      names_to = "item",
+      values_to = "y_raw"
+    ) %>%
+    filter(!is.na(y_raw)) %>%
     mutate(
-      race_c = race - mean(race, na.rm = TRUE),
-      bmi_z = as.numeric(scale(bmi)),
-      base_age_z = as.numeric(scale(base_age))
-    )
+      item_idx = match(item, all_item_cols),
+      y_int = as.integer(y_raw)
+    ) %>%
+    arrange(person_idx, time_idx, item_idx)
 
-  dat_long <- dat_long %>%
-    semi_join(person_tbl %>% select(id, person), by = c("id", "person")) %>%
-    select(-race, -bmi, -base_age) %>%
-    left_join(
-      person_tbl %>%
-        select(id, person, race, bmi, base_age, race_c, bmi_z, base_age_z),
-      by = c("id", "person")
-    )
+  # Item properties — all ordinal 1–4 for the base 4-item PDS set
+  is_bin <- rep(0L, length(all_item_cols))
+  k_items <- rep(4L, length(all_item_cols))
+  k_max <- 4L
 
-  # Reindex after filtering so Stan indices are contiguous and bounded.
-  dat_long <- dat_long %>%
-    mutate(
-      person = as.integer(factor(id)),
-      itm = as.integer(factor(itm, levels = sort(unique(itm)))),
-      time = as.integer(factor(time, levels = sort(unique(time))))
-    )
-
-  nobs <- nrow(dat_long)
-  p <- length(unique(dat_long$itm))
-  ni <- length(unique(dat_long$person))
-  d <- length(unique(dat_long$time))
-
-  y <- as.integer(dat_long$resp)
-
-  is_binary <- rep(0L, p)
-  is_binary[c(5, 10)] <- 1L
-
-  k_item <- rep(4L, p)
-  k_item[c(5, 10)] <- 2L
-  k_max <- max(k_item)
-
-  xf_person <- as.matrix(person_tbl[, c("race_c", "bmi_z", "base_age_z")])
-  xf <- as.matrix(dat_long[, c("race_c", "bmi_z", "base_age_z")])
-  xtv <- as.matrix(dat_long[, c("age_c", "age2_c")])
-
-  nfpreds <- ncol(xf_person)
-  ntvpreds <- ncol(xtv)
-
-  # IMPORTANT: for your Stan file, mtv/mf are item counts, not multiplied by predictor count
-  mtv <- sum(Ldf[, 1] == 1)
-  mf <- sum(Ldf[, 2] == 1)
+  cat(
+    "  n persons:",
+    length(ids),
+    "| n waves: 7 | n items:",
+    length(all_item_cols),
+    "| n obs:",
+    nrow(dat_long),
+    "\n"
+  )
+  cat(
+    "  Age range:",
+    round(range(dat$age), 1),
+    "| mean:",
+    round(age_mean, 2),
+    "\n"
+  )
 
   list(
-    nobs = nobs,
-    p = p,
-    ni = ni,
-    d = d,
-    person = dat_long$person,
-    itm = dat_long$itm,
-    time = dat_long$time,
-    age_c = dat_long$age_c,
-    age2_c = dat_long$age2_c,
-    y = y,
-    is_binary = is_binary,
-    k_item = k_item,
-    k_max = k_max,
+    dat_long = dat_long,
+    item_names = all_item_cols,
+    ids = ids,
+    age_mean = age_mean,
+    ni = length(ids),
+    d = 7L,
+    p = length(all_item_cols),
+    nobs = nrow(dat_long),
+    is_binary = is_bin,
+    k_items = k_items,
+    k_max = k_max
+  )
+}
+
+# ---------------------------------------------------------------------------
+# HELPER: assemble Stan data list
+# ---------------------------------------------------------------------------
+# ldf: p × 2 matrix; col 1 = time-varying DIF (age), col 2 = invariant DIF
+# baseline_age: if TRUE, include person-mean age as time-invariant predictor
+make_stan_data <- function(prep, ldf = NULL, baseline_age = TRUE) {
+  dat <- prep$dat_long
+
+  if (is.null(ldf)) {
+    ldf <- matrix(0L, prep$p, 2)
+  }
+
+  mtv <- as.integer(sum(ldf[, 1]))
+  mf <- as.integer(sum(ldf[, 2]))
+
+  # Time-invariant predictor: baseline age (centered, scaled)
+  if (baseline_age) {
+    nfpreds <- 1L
+    # Person-level mean age (one value per person)
+    age_by_person <- dat %>%
+      group_by(person_idx) %>%
+      summarise(mean_age_c = mean(age_c, na.rm = TRUE), .groups = "drop") %>%
+      arrange(person_idx)
+    xf_person <- matrix(scale(age_by_person$mean_age_c)[, 1], ncol = 1)
+    # obs-level version (same value repeated for all obs of same person)
+    xf <- matrix(xf_person[dat$person_idx, 1], ncol = 1)
+  } else {
+    nfpreds <- 0L
+    xf_person <- matrix(0, prep$ni, 0)
+    xf <- matrix(0, prep$nobs, 0)
+  }
+
+  list(
+    nobs = prep$nobs,
+    p = prep$p,
+    ni = prep$ni,
+    d = prep$d,
+    person = dat$person_idx,
+    itm = dat$item_idx,
+    time = dat$time_idx,
+    age_c = dat$age_c,
+    age2_c = dat$age2_c,
+    y = dat$y_int,
+    is_binary = prep$is_binary,
+    k_item = prep$k_items,
+    k_max = prep$k_max,
     nfpreds = nfpreds,
-    ntvpreds = ntvpreds,
+    ntvpreds = 0L,
     xf_person = xf_person,
     xf = xf,
-    xtv = xtv,
-    ldf = Ldf,
+    xtv = matrix(0, prep$nobs, 0),
+    ldf = ldf,
     mtv = mtv,
     mf = mf,
-    sigma_l = 2,
-    sigma_nu = 3,
-    sigma_cor = 2,
-    sigma_f = 1,
-    sigma_di = 2 # ,
-    # total_var = 0.76
+    # prior scales (Chen & Bauer 2024 defaults)
+    sigma_l = 1.0,
+    sigma_nu = 2.0,
+    sigma_cor = 1.0,
+    sigma_f = 1.5,
+    sigma_di = 0.5
   )
 }
 
-compile_model <- function(stan_file) {
-  stan_path <- resolve_input_path(stan_file)
-  invisible(stan_model(file = stan_path))
-}
-
-fit_once <- function(
-  stan_m,
-  fa_data,
-  chains = 2,
-  iter = 1000,
-  warmup = 500,
-  seed = 1,
-  refresh = 100,
-  control = list(adapt_delta = 0.99, max_treedepth = 15)
+# ---------------------------------------------------------------------------
+# HELPER: fit Stan model
+# ---------------------------------------------------------------------------
+fit_stan <- function(
+  stan_data,
+  model,
+  chains = 4,
+  iter_warmup = 1000,
+  iter_sampling = 1000,
+  label = ""
 ) {
-  sampling(
-    object = stan_m,
-    data = fa_data,
+  cat("\nFitting Stan model", label, "...\n")
+  # init = "0" starts all parameters at 0 in unconstrained space, which maps
+  # cholesky_factor_corr to the identity (zero correlation) — avoids the
+  # boundary-hit warnings from random initialization
+  model$sample(
+    data = stan_data,
     chains = chains,
-    iter = iter,
-    warmup = warmup,
-    seed = seed,
-    refresh = refresh,
-    control = control
+    parallel_chains = min(chains, parallel::detectCores() - 1),
+    iter_warmup = iter_warmup,
+    iter_sampling = iter_sampling,
+    adapt_delta = 0.95,
+    init = "0",
+    refresh = 200,
+    show_messages = TRUE,
+    seed = 90025
   )
 }
 
-get_draws_df <- function(fit) {
-  posterior::as_draws_df(fit)
-}
+# ---------------------------------------------------------------------------
+# HELPER: DIF selection from Step 1 posterior
+# ---------------------------------------------------------------------------
+# Returns updated ldf matrix with items flagged where 90% CI excludes 0
+select_dif <- function(fit1, prep, ci_level = 0.90) {
+  p <- prep$p
+  ldf <- matrix(0L, p, 2) # col1 = time-varying, col2 = invariant (not used here)
 
-posterior_prob_gt0 <- function(draws, param) mean(draws[[param]] > 0)
+  # Extract time-varying DIF posteriors for loadings and intercepts
+  vars_to_check <- c("l_diftv", "n_diftv")
 
-cri_excludes_0 <- function(draws, param, level = 0.95) {
-  q <- quantile(
-    draws[[param]],
-    probs = c((1 - level) / 2, 1 - (1 - level) / 2),
-    na.rm = TRUE
+  # Since Step 1 sets all items with time-varying DIF, mtv = p
+  # l_diftv[i] and n_diftv[i] correspond to item i
+  alpha <- (1 - ci_level) / 2
+
+  results <- lapply(vars_to_check, function(vname) {
+    draws <- tryCatch(
+      fit1$draws(variables = vname, format = "matrix"),
+      error = function(e) NULL
+    )
+    if (is.null(draws)) {
+      return(rep(FALSE, p))
+    }
+    # columns are [1]...[p]
+    apply(draws, 2, function(col) {
+      lo <- quantile(col, alpha)
+      hi <- quantile(col, 1 - alpha)
+      lo > 0 | hi < 0 # CI excludes 0
+    })
+  })
+
+  # Flag item if EITHER loading or intercept DIF is significant
+  dif_flag <- Reduce(`|`, results)
+
+  ldf[dif_flag, 1] <- 1L
+
+  cat("\nDIF selection (", ci_level * 100, "% CI):\n", sep = "")
+  sel_df <- data.frame(
+    item = prep$item_names,
+    dif_loading = results[[1]],
+    dif_intercept = results[[2]],
+    selected = dif_flag
   )
-  (q[1] > 0) || (q[2] < 0)
+  print(sel_df, row.names = FALSE)
+
+  list(ldf = ldf, sel_df = sel_df)
 }
 
-cri_width <- function(draws, param, level = 0.95) {
-  q <- quantile(
-    draws[[param]],
-    probs = c((1 - level) / 2, 1 - (1 - level) / 2),
-    na.rm = TRUE
-  )
-  unname(q[2] - q[1])
+# ---------------------------------------------------------------------------
+# HELPER: extract growth parameters from Step 2
+# ---------------------------------------------------------------------------
+extract_growth_params <- function(fit2, sex_label) {
+  params <- c("mu_slp", "mu_quad", "phi_int", "phi_slp", "eti_sd", "Omega[1,2]")
+  draws <- fit2$draws(variables = params, format = "df")
+
+  summ <- posterior::summarise_draws(
+    draws,
+    mean,
+    sd,
+    ~ quantile(.x, c(0.05, 0.25, 0.50, 0.75, 0.95)),
+    posterior::default_convergence_measures()
+  ) %>%
+    mutate(sex = sex_label)
+
+  summ
 }
 
-run_one_rep <- function(
-  n,
-  stan_m,
-  Ldf,
-  seed = 1,
-  fit_iter = 800,
-  fit_warmup = 400,
-  success_param = "mu_quad",
-  success_type = c("prob_gt0", "cri_excl0", "precision"),
-  prob_cut = 0.95,
-  width_cut = 0.15,
-  refresh = 100
+# ---------------------------------------------------------------------------
+# HELPER: extract item parameter posteriors and compute implied params by age
+# ---------------------------------------------------------------------------
+extract_item_params <- function(
+  fit2,
+  prep,
+  ldf_step2,
+  sex_label,
+  age_grid = seq(-4, 4, by = 0.5)
 ) {
-  success_type <- match.arg(success_type)
+  draws_base <- fit2$draws(variables = c("lp", "np"), format = "df")
 
-  dat <- simulate_puberty_lmnfa_long(n = n)
+  p <- prep$p
+  items <- prep$item_names
 
-  # range checks
-  stopifnot(all(dat$resp[dat$item %in% c(1:4, 6:9)] %in% 1:4))
-  stopifnot(all(dat$resp[dat$item %in% c(5, 10)] %in% 0:1))
+  lp_mean <- colMeans(as.matrix(draws_base[, grep(
+    "^lp\\[",
+    names(draws_base)
+  )]))
+  np_mean <- colMeans(as.matrix(draws_base[, grep(
+    "^np\\[",
+    names(draws_base)
+  )]))
 
-  fa_data <- build_fa_data(dat, Ldf = Ldf)
+  # Item-level DIF means, initialized to 0 (non-DIF items stay 0)
+  ldiftv_mean <- rep(0, p)
+  ndiftv_mean <- rep(0, p)
 
-  fit <- try(
-    fit_once(
-      stan_m,
-      fa_data,
-      chains = 1,
-      iter = fit_iter,
-      warmup = fit_warmup,
-      seed = seed,
-      refresh = refresh
+  # ldf_step2[, 1] == 1 marks which items have time-varying DIF in Step 2.
+  # Stan's l_diftv[1..mtv] correspond in order to those flagged items.
+  dif_item_idx <- which(ldf_step2[, 1] == 1)
+
+  if (length(dif_item_idx) > 0) {
+    draws_dif <- fit2$draws(variables = c("l_diftv", "n_diftv"), format = "df")
+    ldiftv_cols <- grep("^l_diftv\\[", names(draws_dif))
+    ndiftv_cols <- grep("^n_diftv\\[", names(draws_dif))
+
+    if (length(ldiftv_cols) > 0) {
+      ldiftv_mean[dif_item_idx] <- colMeans(
+        as.matrix(draws_dif[, ldiftv_cols, drop = FALSE])
+      )
+    }
+    if (length(ndiftv_cols) > 0) {
+      ndiftv_mean[dif_item_idx] <- colMeans(
+        as.matrix(draws_dif[, ndiftv_cols, drop = FALSE])
+      )
+    }
+  }
+
+  expand.grid(item_idx = seq_len(p), age_c = age_grid) %>%
+    mutate(
+      item = items[item_idx],
+      reporter = ifelse(grepl("_p$", item), "Parent", "Youth"),
+      base_item = sub("_(p|y)$", "", item),
+      lam = lp_mean[item_idx] * exp(ldiftv_mean[item_idx] * age_c),
+      nu = np_mean[item_idx] + ndiftv_mean[item_idx] * age_c,
+      age = age_c + prep$age_mean,
+      sex = sex_label
+    )
+}
+
+# ---------------------------------------------------------------------------
+# HELPER: extract factor scores (posterior mean of eta per person × wave)
+# ---------------------------------------------------------------------------
+extract_factor_scores <- function(fit2, prep, ldf_step2, sex_label) {
+  # eta_tp = fac_gr[1,p] + fac_gr[2,p]*age_c + fac_gr[3,p]*age2_c + fac_eti[t,p]
+  # We reconstruct from saved parameters
+  draws <- fit2$draws(
+    variables = c(
+      "mu_slp",
+      "mu_quad",
+      "b_mu",
+      "b_phi",
+      "phi_int",
+      "phi_slp",
+      "L_Omega",
+      "fac_dist",
+      "fac_eti_raw",
+      "eti_sd"
     ),
-    silent = TRUE
-  )
-  if (inherits(fit, "try-error")) {
-    return(list(ok = FALSE, reason = "fit_error"))
-  }
-
-  draws <- get_draws_df(fit)
-  if (!success_param %in% names(draws)) {
-    return(list(ok = FALSE, reason = "param_not_found"))
-  }
-
-  ok <- switch(
-    success_type,
-    prob_gt0 = posterior_prob_gt0(draws, success_param) > prob_cut,
-    cri_excl0 = cri_excludes_0(draws, success_param),
-    precision = cri_width(draws, success_param) < width_cut
+    format = "df"
   )
 
-  list(ok = ok, reason = "ok")
+  mu_slp <- mean(draws$mu_slp)
+  mu_quad <- mean(draws$mu_quad)
+  eti_sd <- mean(draws$eti_sd)
+
+  fac_dist_cols <- grep("^fac_dist\\[", names(draws))
+  fac_eti_cols <- grep("^fac_eti_raw\\[", names(draws))
+
+  fac_dist_mean <- colMeans(as.matrix(draws[, fac_dist_cols]))
+  fac_eti_mean <- colMeans(as.matrix(draws[, fac_eti_cols]))
+
+  ni <- prep$ni
+  d <- prep$d
+
+  # fac_dist is now 2 × ni (row-major in Stan → columns cycle fastest in R)
+  fac_dist_mat <- matrix(fac_dist_mean, nrow = 2, ncol = ni)
+  fac_eti_mat <- matrix(fac_eti_mean * eti_sd, nrow = d, ncol = ni)
+
+  b_mu_cols <- grep("^b_mu\\[", names(draws))
+  b_phi_cols <- grep("^b_phi\\[", names(draws))
+  b_mu_mean <- colMeans(as.matrix(draws[, b_mu_cols, drop = FALSE]))
+  b_phi_mean <- colMeans(as.matrix(draws[, b_phi_cols, drop = FALSE]))
+
+  age_by_person <- prep$dat_long %>%
+    group_by(person_idx) %>%
+    summarise(mean_age_c = mean(age_c, na.rm = TRUE), .groups = "drop") %>%
+    arrange(person_idx)
+  xf_person <- scale(age_by_person$mean_age_c)[, 1]
+
+  # L_Omega is now 2×2 Cholesky
+  lomega_cols <- grep("^L_Omega\\[", names(draws))
+  L_Omega_mean <- colMeans(as.matrix(draws[, lomega_cols]))
+  L_Omega_mat <- matrix(L_Omega_mean, nrow = 2, ncol = 2)
+
+  phi_int <- mean(draws$phi_int)
+  phi_slp <- mean(draws$phi_slp)
+  phi_eta <- c(phi_int, phi_slp)
+
+  scores <- purrr::map_dfr(seq_len(ni), function(k) {
+    mu_eta <- c(0, mu_slp)
+    sd_eta <- phi_eta * exp(b_phi_mean * xf_person[k])
+    fac_gr_k <- mu_eta +
+      b_mu_mean * xf_person[k] +
+      diag(sd_eta) %*% L_Omega_mat %*% fac_dist_mat[, k]
+
+    purrr::map_dfr(seq_len(d), function(t) {
+      age_obs <- prep$dat_long %>%
+        filter(person_idx == k, time_idx == t) %>%
+        slice(1)
+      if (nrow(age_obs) == 0) {
+        return(NULL)
+      }
+
+      age_c_val <- age_obs$age_c[1]
+      age2_c_val <- age_obs$age2_c[1]
+      eta_tp <- fac_gr_k[1] +
+        fac_gr_k[2] * age_c_val +
+        mu_quad * age2_c_val +
+        fac_eti_mat[t, k]
+
+      tibble(
+        person_idx = k,
+        id = prep$ids[k],
+        time_idx = t,
+        wave = wave_order[t],
+        age = age_obs$age[1],
+        eta = as.numeric(eta_tp)
+      )
+    })
+  })
+
+  scores %>% mutate(sex = sex_label)
 }
 
-estimate_power_curve <- function(
-  n_grid,
-  reps = 100,
-  stan_file = "stan/lmnlfa-quad.stan",
-  dif_time_items = c(1, 2, 3),
-  dif_inv_items = c(6, 7, 8),
-  success_param = "mu_quad",
-  success_type = "cri_excl0",
-  seed = 1,
-  fit_iter = 800,
-  fit_warmup = 400,
-  refresh = 100,
-  progress = interactive()
-) {
-  set.seed(seed)
+# ---------------------------------------------------------------------------
+# MAIN: sex-stratified two-step LMNLFA
+# ---------------------------------------------------------------------------
+all_dif_sel <- list()
+all_growth <- list()
+all_scores <- list()
 
-  Ldf <- make_ldf_simple(
-    P = 10,
-    dif_time_items = dif_time_items,
-    dif_inv_items = dif_inv_items
+for (sx in c("female", "male")) {
+  cat("\n\n", strrep("=", 70), "\n")
+  cat("  LMNLFA |", sx, "\n")
+  cat(strrep("=", 70), "\n")
+
+  parent_df <- if (sx == "female") female_parent else male_parent
+  youth_df <- if (sx == "female") female_youth else male_youth
+
+  # --- Data preparation ---------------------------------------------------
+  prep <- build_lmnlfa_data(parent_df, youth_df, sx)
+
+  # --- Step 1: All items have potential age DIF ---------------------------
+  cat("\n--- Step 1: DIF screening (all items) ---\n")
+  ldf_step1 <- matrix(c(rep(1L, prep$p), rep(0L, prep$p)), ncol = 2)
+  stan_data_step1 <- make_stan_data(prep, ldf = ldf_step1, baseline_age = TRUE)
+
+  fit1 <- fit_stan(
+    stan_data_step1,
+    stan_model,
+    chains = 4,
+    iter_warmup = 1000,
+    iter_sampling = 1000,
+    label = paste("Step 1 |", sx)
   )
-  stan_m <- compile_model(stan_file)
 
-  map_dfr(n_grid, function(n) {
-    if (progress) {
-      message(sprintf(
-        "[%s] Starting n = %s with %s replications",
-        Sys.time(),
-        n,
-        reps
-      ))
+  # Convergence check
+  diag1 <- fit1$diagnostic_summary(quiet = TRUE)
+  cat("  Step 1 divergences:", sum(diag1$num_divergent), "\n")
+  cat(
+    "  Step 1 max Rhat:   ",
+    round(max(fit1$summary()$rhat, na.rm = TRUE), 3),
+    "\n"
+  )
+
+  # --- Diagnostics: growth variance parameters ----------------------------
+  cat("\n--- Growth variance diagnostics [Step 1 |", sx, "] ---\n")
+  diag_vars <- c("phi_int", "phi_slp", "eti_sd", "mu_slp", "mu_quad")
+  diag_summ <- fit1$summary(
+    variables = diag_vars,
+    mean,
+    sd,
+    ~ quantile(.x, c(0.05, 0.5, 0.95)),
+    posterior::default_convergence_measures()
+  )
+  print(diag_summ, digits = 3)
+
+  # intercept-slope correlation element of the Cholesky factor
+  lomega_summ <- fit1$summary(
+    variables = "L_Omega",
+    mean,
+    sd,
+    ~ quantile(.x, c(0.05, 0.5, 0.95))
+  )
+  cat("\nL_Omega (2x2 Cholesky; [2,1] is the correlation element):\n")
+  print(lomega_summ, digits = 3)
+
+  # How many times did phi_slp posterior mass sit below 0.05?
+  phi_slp_draws <- fit1$draws("phi_slp", format = "matrix")
+  cat(
+    sprintf(
+      "\n  phi_slp: mean=%.3f, P(phi_slp < 0.05)=%.2f%%\n",
+      mean(phi_slp_draws),
+      100 * mean(phi_slp_draws < 0.05)
+    )
+  )
+  cat(
+    sprintf(
+      "  phi_int: mean=%.3f\n",
+      mean(fit1$draws("phi_int", format = "matrix"))
+    )
+  )
+
+  # Worst-Rhat parameters
+  s1_summ <- fit1$summary()
+  bad_rhat <- s1_summ[!is.na(s1_summ$rhat) & s1_summ$rhat > 1.05, ]
+  if (nrow(bad_rhat) > 0) {
+    cat("\n  Parameters with Rhat > 1.05:\n")
+    print(
+      bad_rhat[order(-bad_rhat$rhat), c("variable", "mean", "sd", "rhat")][
+        seq_len(min(10, nrow(bad_rhat))),
+      ],
+      digits = 3
+    )
+  } else {
+    cat("\n  All Rhat <= 1.05\n")
+  }
+  cat(strrep("-", 50), "\n")
+
+  # --- DIF selection ------------------------------------------------------
+  dif_result <- select_dif(fit1, prep, ci_level = 0.90)
+  all_dif_sel[[sx]] <- dif_result$sel_df %>% mutate(sex = sx)
+
+  # --- Step 2: Refit with selected DIF only ------------------------------
+  cat("\n--- Step 2: Refit with DIF-selected items ---\n")
+  ldf_step2 <- dif_result$ldf
+  stan_data_step2 <- make_stan_data(prep, ldf = ldf_step2, baseline_age = TRUE)
+
+  fit2 <- fit_stan(
+    stan_data_step2,
+    stan_model,
+    chains = 4,
+    iter_warmup = 1000,
+    iter_sampling = 1000,
+    label = paste("Step 2 |", sx)
+  )
+
+  diag2 <- fit2$diagnostic_summary(quiet = TRUE)
+  cat("  Step 2 divergences:", sum(diag2$num_divergent), "\n")
+  cat(
+    "  Step 2 max Rhat:   ",
+    round(max(fit2$summary()$rhat, na.rm = TRUE), 3),
+    "\n"
+  )
+
+  # --- Growth parameters --------------------------------------------------
+  gp <- extract_growth_params(fit2, sx)
+  cat("\nGrowth parameters [", sx, "]:\n")
+  print(gp[, c("variable", "mean", "sd", "q5", "q95", "rhat")])
+  all_growth[[sx]] <- gp
+
+  # --- Factor scores -------------------------------------------------------
+  cat("\nExtracting factor scores...\n")
+  scores <- tryCatch(
+    extract_factor_scores(fit2, prep, ldf_step2, sx),
+    error = function(e) {
+      message("Factor score extraction failed: ", e$message)
+      NULL
     }
+  )
+  if (!is.null(scores)) {
+    all_scores[[sx]] <- scores
+  }
 
-    n_start <- Sys.time()
-    out <- vector("list", reps)
-
-    for (rep_idx in seq_len(reps)) {
-      rep_start <- Sys.time()
-      out[[rep_idx]] <- run_one_rep(
-        n = n,
-        stan_m = stan_m,
-        Ldf = Ldf,
-        seed = sample.int(1e9, 1),
-        fit_iter = fit_iter,
-        fit_warmup = fit_warmup,
-        success_param = success_param,
-        success_type = success_type,
-        refresh = refresh
+  # --- Plot: item parameters by age ----------------------------------------
+  ip <- extract_item_params(fit2, prep, ldf_step2, sx)
+  if (!is.null(ip) && nrow(ip) > 0) {
+    p_ip <- ggplot(
+      ip,
+      aes(x = age, y = lam, colour = reporter, linetype = base_item)
+    ) +
+      geom_line(linewidth = 1) +
+      scale_colour_manual(values = c(Parent = "#2166ac", Youth = "#d73027")) +
+      labs(
+        title = paste0("Item loadings by age — ", sx),
+        subtitle = "Posterior mean loading (λ) as a function of age",
+        x = "Age (years)",
+        y = "Loading (λ)",
+        colour = "Reporter",
+        linetype = "Item"
+      ) +
+      theme_minimal(base_size = 13) +
+      theme(
+        legend.position = "bottom",
+        plot.subtitle = element_text(colour = "grey45")
       )
 
-      if (progress) {
-        elapsed_rep <- round(
-          as.numeric(difftime(Sys.time(), rep_start, units = "mins")),
-          2
-        )
-        message(
-          sprintf(
-            "[%s] Finished n = %s replicate %s/%s in %s min (%s)",
-            Sys.time(),
-            n,
-            rep_idx,
-            reps,
-            elapsed_rep,
-            out[[rep_idx]]$reason
-          )
-        )
-      }
-    }
+    ggsave(
+      file.path(out_dir, paste0("item_loadings_by_age_", sx, ".png")),
+      p_ip,
+      width = 8,
+      height = 5,
+      dpi = 180
+    )
 
-    if (progress) {
-      elapsed_n <- round(
-        as.numeric(difftime(Sys.time(), n_start, units = "mins")),
-        2
+    p_nu <- ggplot(
+      ip,
+      aes(x = age, y = nu, colour = reporter, linetype = base_item)
+    ) +
+      geom_line(linewidth = 1) +
+      scale_colour_manual(values = c(Parent = "#2166ac", Youth = "#d73027")) +
+      labs(
+        title = paste0("Item intercepts by age — ", sx),
+        subtitle = "Posterior mean intercept (ν) as a function of age",
+        x = "Age (years)",
+        y = "Intercept (ν)",
+        colour = "Reporter",
+        linetype = "Item"
+      ) +
+      theme_minimal(base_size = 13) +
+      theme(
+        legend.position = "bottom",
+        plot.subtitle = element_text(colour = "grey45")
       )
-      message(sprintf(
-        "[%s] Completed n = %s in %s min",
-        Sys.time(),
-        n,
-        elapsed_n
-      ))
-    }
 
+    ggsave(
+      file.path(out_dir, paste0("item_intercepts_by_age_", sx, ".png")),
+      p_nu,
+      width = 8,
+      height = 5,
+      dpi = 180
+    )
+  }
+
+  # --- Plot: mean growth trajectory ----------------------------------------
+  # Implied mean trajectory: eta = 0 + mu_slp * age_c + mu_quad * age2_c
+  gp_means <- fit2$draws(variables = c("mu_slp", "mu_quad"), format = "df")
+  age_grid <- seq(
+    min(prep$dat_long$age, na.rm = TRUE),
+    max(prep$dat_long$age, na.rm = TRUE),
+    length.out = 100
+  )
+  age_c_grid <- age_grid - prep$age_mean
+  age2_c_grid <- age_c_grid^2
+
+  # Draw-level trajectories for uncertainty ribbon
+  traj_draws <- purrr::map_dfr(seq_len(min(200, nrow(gp_means))), function(i) {
     tibble(
-      n = n,
-      reps = reps,
-      conv_rate = mean(map_lgl(out, ~ .x$reason == "ok")),
-      power = mean(map_lgl(out, ~ isTRUE(.x$ok)), na.rm = TRUE)
+      age = age_grid,
+      eta_mean = gp_means$mu_slp[i] *
+        age_c_grid +
+        gp_means$mu_quad[i] * age2_c_grid,
+      draw = i
     )
   })
+
+  traj_summ <- traj_draws %>%
+    group_by(age) %>%
+    summarise(
+      eta_med = median(eta_mean),
+      eta_lo = quantile(eta_mean, 0.05),
+      eta_hi = quantile(eta_mean, 0.95),
+      .groups = "drop"
+    )
+
+  p_traj <- ggplot(traj_summ, aes(x = age)) +
+    geom_ribbon(
+      aes(ymin = eta_lo, ymax = eta_hi),
+      fill = "#4393c3",
+      alpha = 0.25
+    ) +
+    geom_line(aes(y = eta_med), colour = "#2166ac", linewidth = 1.2) +
+    geom_hline(yintercept = 0, linetype = "dashed", colour = "grey60") +
+    labs(
+      title = paste0("Mean puberty growth trajectory — ", sx),
+      subtitle = "Posterior median + 90% CI; intercept set to mean at mean age",
+      x = "Age (years)",
+      y = "Latent puberty (η)"
+    ) +
+    theme_minimal(base_size = 13) +
+    theme(plot.subtitle = element_text(colour = "grey45"))
+
+  ggsave(
+    file.path(out_dir, paste0("growth_trajectory_", sx, ".png")),
+    p_traj,
+    width = 7,
+    height = 5,
+    dpi = 180
+  )
+  cat("Plots written for", sx, "\n")
+
+  # Save fit objects for diagnostics (optional, large files)
+  # fit1$save_object(file.path(out_dir, paste0("fit1_", sx, ".rds")))
+  # fit2$save_object(file.path(out_dir, paste0("fit2_", sx, ".rds")))
 }
 
-if (sys.nframe() == 0) {
-  # --- observed data fit ---
-  Ldf <- make_ldf_simple(P = 10)
-  dat_long <- prepare_observed_puberty_lmnlfa_long(data)
-  if (isTRUE(test_mode)) {
-    set.seed(90025)
-    keep_ids <- sample(unique(dat_long$id), min(test_n_ids, dplyr::n_distinct(dat_long$id)))
-    dat_long <- dplyr::filter(dat_long, id %in% keep_ids)
-    message(sprintf("[%s] Test mode ON: fitting %s IDs", Sys.time(), dplyr::n_distinct(dat_long$id)))
-  }
-  fa_data <- build_fa_data(dat_long, Ldf)
-  message(sprintf("[%s] Compiling Stan model", Sys.time()))
-  stan_m <- compile_model("stan/lmnlfa-quad.stan")
-  message(sprintf("[%s] Finished compiling Stan model", Sys.time()))
-  message(sprintf("[%s] Starting observed-data fit", Sys.time()))
-  fit <- fit_once(
-    stan_m,
-    fa_data,
-    chains = if (isTRUE(test_mode)) 1 else 2,
-    iter = if (isTRUE(test_mode)) 200 else 1000,
-    warmup = if (isTRUE(test_mode)) 100 else 500,
-    seed = 123,
-    refresh = if (isTRUE(test_mode)) 20 else 50
+# ---------------------------------------------------------------------------
+# OUTPUT: CSVs
+# ---------------------------------------------------------------------------
+dif_table <- bind_rows(all_dif_sel)
+write.csv(dif_table, file.path(out_dir, "dif_selection.csv"), row.names = FALSE)
+cat("\nDIF selection table written.\n")
+
+growth_table <- bind_rows(all_growth)
+write.csv(
+  growth_table,
+  file.path(out_dir, "growth_params.csv"),
+  row.names = FALSE
+)
+cat("Growth parameter table written.\n")
+
+if (length(all_scores) > 0) {
+  scores_table <- bind_rows(all_scores)
+  write.csv(
+    scores_table,
+    file.path(out_dir, "factor_scores.csv"),
+    row.names = FALSE
   )
-  message(sprintf("[%s] Finished observed-data fit", Sys.time()))
-  print(fit, pars = c("mu_lin", "mu_quad", "sigma_eta"))
+  cat("Factor scores written (", nrow(scores_table), "rows).\n")
 }
+
+cat("\nAll LMNLFA outputs written to:", out_dir, "\n")

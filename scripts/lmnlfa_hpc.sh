@@ -48,7 +48,7 @@ export OUT_DIR="/u/project/silvers/data/ABCD/cfm-dissertation-output/study1/outp
 # Path to the CmdStan installation created by cmdstanr::install_cmdstan()
 # Update the version number if you install a newer CmdStan.
 export CMDSTAN="${HOME}/.cmdstan/cmdstan-2.38.0"
-export TMPDIR="/u/scratch/${USER}/tmp"
+export TMPDIR="/u/scratch/c/clarefmc/tmp"
 mkdir -p "$TMPDIR"
 SCRIPT_DIR="$SGE_O_WORKDIR"
 
