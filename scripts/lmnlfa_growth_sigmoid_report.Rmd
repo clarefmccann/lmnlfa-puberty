@@ -1,0 +1,157 @@
+---
+title: "Sigmoidal L-MNLFA Puberty Model -- Results Report"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 2
+    theme: flatly
+    self_contained: true
+params:
+  n_subsample: 1500
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(knitr)
+  library(kableExtra)
+})
+
+# This report only ASSEMBLES already-computed outputs (cached .rds
+# summaries already written to CSV, and PNGs already saved by
+# lmnlfa_growth_sigmoid_staged.R) -- it never re-fits any Stan model, so
+# rendering takes seconds, not hours. Re-run lmnlfa_growth_sigmoid_staged.R
+# itself first if you want updated numbers; then re-knit this report.
+
+data_dir <- Sys.getenv("DATA_DIR")
+sshfs_data_dir <- "/private/tmp/sshfs/projects/abcd-projs/dissertation/study1/outputs"
+if (!nzchar(data_dir) || !dir.exists(data_dir)) {
+  if (dir.exists(sshfs_data_dir)) {
+    data_dir <- sshfs_data_dir
+  } else {
+    root_path <- Sys.getenv("HOME_DIR")
+    if (!nzchar(root_path)) root_path <- Sys.getenv("HOME")
+    data_dir <- file.path(root_path, "projects/abcd-projs/dissertation/study1/outputs")
+  }
+}
+
+model_dir <- file.path(data_dir, "lmnlfa_growth_sigmoid_staged")
+trajectories_dir <- file.path(model_dir, "trajectories")
+impact_comparisons_dir <- file.path(model_dir, "impact-comparisons")
+dif_illustrations_dir <- file.path(model_dir, "dif-illustrations")
+dif_selection_dir <- file.path(model_dir, "dif-selection")
+pubertal_estimates_dir <- file.path(model_dir, "pubertal-estimates")
+
+n_subsample <- params$n_subsample
+
+# Emit a raw <img> tag directly via cat() rather than
+# knitr::include_graphics() -- the latter's image-rendering only fires
+# reliably as a chunk's own auto-printed return value, not when called
+# from inside a hand-rolled results='asis' loop like the one below.
+show_image <- function(path) {
+  if (file.exists(path)) {
+    cat(sprintf(
+      '<img src="%s" style="max-width:100%%; height:auto; margin-bottom:1.5em;" />\n\n',
+      path
+    ))
+  } else {
+    cat("_Not yet available:", basename(path), "_\n\n")
+  }
+}
+
+# same reasoning as show_image() -- convert the kable to a raw HTML string
+# and cat() it, rather than relying on print()/auto-print dispatch
+show_table <- function(path, ...) {
+  if (!file.exists(path)) {
+    cat("_Not yet available:", basename(path), "_\n\n")
+    return(invisible(NULL))
+  }
+  df <- read.csv(path)
+  tbl_html <- kbl(df, digits = 3, ...) %>%
+    kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = FALSE) %>%
+    as.character()
+  cat(tbl_html, "\n\n")
+}
+
+# pretty caption from a filename like
+# "dif_illustration_peta_race_c2_female_n1500.png" -> "peta x race c2"
+caption_from_file <- function(f, run_tag, prefix) {
+  base <- sub("\\.png$", "", basename(f))
+  base <- sub(paste0("^", prefix, "_"), "", base)
+  base <- sub(paste0("_", run_tag, "$"), "", base)
+  gsub("_", " ", base)
+}
+```
+
+```{r, results='asis'}
+for (sx in c("female", "male")) {
+  run_tag <- paste0(sx, "_n", n_subsample)
+
+  cat("\n\n# ", tools::toTitleCase(sx), " (n = ", n_subsample, ")\n\n", sep = "")
+
+  # NOTE: pattern must require an underscore immediately before run_tag --
+  # "female_n1500" contains "male_n1500" as a literal substring, so a bare
+  # pattern = run_tag would wrongly match female's files while listing
+  # male's (and vice versa isn't an issue, but this direction is real).
+  fits_exist <- length(list.files(file.path(model_dir, "fits"), pattern = paste0("_", run_tag, "\\.rds$"))) > 0
+  if (!fits_exist) {
+    cat("No cached fits found for this sex yet -- run `lmnlfa_growth_sigmoid_staged.R", sx, "` first.\n\n")
+    next
+  }
+
+  # -------------------------------------------------------------------
+  cat("## Growth Parameters (Stage C)\n\n")
+  show_table(file.path(pubertal_estimates_dir, paste0("growth_params_", run_tag, ".csv")))
+
+  # -------------------------------------------------------------------
+  cat("\n\n## Population Trajectory\n\n")
+  show_image(file.path(trajectories_dir, paste0("mean_trajectory_", run_tag, ".png")))
+
+  cat("\n\n### Individual Trajectories by Race\n\n")
+  show_image(file.path(trajectories_dir, paste0("trajectories_by_race_", run_tag, ".png")))
+
+  # -------------------------------------------------------------------
+  cat("\n\n## Growth-Curve Impact: Race + WtHR\n\n")
+  cat("### Impact estimates, before vs. after separating DIF (Stage A vs. Stage C)\n\n")
+  show_image(file.path(impact_comparisons_dir, paste0("impact_comparison_A_vs_C_", run_tag, ".png")))
+
+  cat("\n\n### Trajectory by covariate, for significant impact terms\n\n")
+  impact_files <- list.files(trajectories_dir, pattern = paste0("^impact_illustration_.*_", run_tag, "\\.png$"), full.names = TRUE)
+  if (length(impact_files) == 0) {
+    cat("No significant impact terms for this sex.\n\n")
+  } else {
+    for (f in impact_files) {
+      cat("**", caption_from_file(f, run_tag, "impact_illustration"), "**\n\n", sep = "")
+      show_image(f)
+      cat("\n\n")
+    }
+  }
+
+  # -------------------------------------------------------------------
+  cat("\n\n## Differential Item Functioning (DIF)\n\n")
+  cat("### DIF selection (Benjamini-Hochberg FDR, q = .05, |effect| > .05)\n\n")
+  show_image(file.path(dif_selection_dir, paste0("dif_selection_heatmap_", run_tag, ".png")))
+
+  cat("\n\n<details><summary>Retained DIF terms as tables</summary>\n\n")
+  cat("**Loading DIF retained**\n\n")
+  show_table(file.path(dif_selection_dir, paste0("dif_selection_loading_", run_tag, ".csv")))
+  cat("\n\n**Intercept DIF retained**\n\n")
+  show_table(file.path(dif_selection_dir, paste0("dif_selection_intercept_", run_tag, ".csv")))
+  cat("\n\n</details>\n\n")
+
+  cat("\n\n### Item characteristic curves, by retained DIF cell\n\n")
+  dif_files <- list.files(dif_illustrations_dir, pattern = paste0("^dif_illustration_.*_", run_tag, "\\.png$"), full.names = TRUE)
+  if (length(dif_files) == 0) {
+    cat("No retained DIF terms for this sex.\n\n")
+  } else {
+    for (f in dif_files) {
+      cat("**", caption_from_file(f, run_tag, "dif_illustration"), "**\n\n", sep = "")
+      show_image(f)
+      cat("\n\n")
+    }
+  }
+}
+```

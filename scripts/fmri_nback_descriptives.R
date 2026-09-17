@@ -23,13 +23,16 @@ if (!nzchar(data_dir) || !dir.exists(data_dir)) {
 out_base <- Sys.getenv("OUT_DIR")
 if (!nzchar(out_base)) out_base <- data_dir
 
-script_dir <- tryCatch(
-  {
-    ofile <- sys.frames()[[1]]$ofile
-    if (is.null(ofile)) "scripts" else dirname(ofile)
-  },
-  error = function(e) "scripts"
-)
+script_dir <- Sys.getenv("SGE_O_WORKDIR")
+if (!nzchar(script_dir)) {
+  cmd_args <- commandArgs(trailingOnly = FALSE)
+  file_arg <- sub("^--file=", "", cmd_args[grep("^--file=", cmd_args)])
+  script_dir <- if (length(file_arg) > 0) {
+    dirname(normalizePath(file_arg[1]))
+  } else {
+    "scripts"
+  }
+}
 palette_file <- file.path(script_dir, "color_palette.R")
 if (!file.exists(palette_file)) palette_file <- file.path("scripts", "color_palette.R")
 source(palette_file)
@@ -384,7 +387,8 @@ run_descriptives_for_contrast <- function(cst) {
   # ---------------------------------------------------------------------------
   # (6) Region-pair comparison boxplots: amygdala vs. rostral middle frontal,
   # amygdala vs. insula. Both regions are bilateral, so hemisphere is kept as
-  # a facet (left/right) rather than averaged away.
+  # one facet dimension (left/right) and sex as the other, rather than
+  # averaging either away.
   # ---------------------------------------------------------------------------
   region_pair_boxplot <- function(
     label_a,
@@ -392,7 +396,7 @@ run_descriptives_for_contrast <- function(cst) {
     filename,
     data = beta_long,
     x_col = "wave_label",
-    subtitle = "Distribution across all people, by wave"
+    subtitle = "Distribution by wave and sex"
   ) {
     d <- data %>% filter(region_label %in% c(label_a, label_b)) %>%
       mutate(region_label = factor(region_label, levels = c(label_a, label_b)))
@@ -411,7 +415,10 @@ run_descriptives_for_contrast <- function(cst) {
     ) +
       geom_hline(yintercept = 0, linetype = "dashed", colour = "grey60") +
       geom_boxplot(outlier.alpha = 0.05, outlier.size = 0.3, linewidth = 0.5) +
-      facet_wrap(~hemi, labeller = as_labeller(c(left = "Left hemisphere", right = "Right hemisphere"))) +
+      facet_grid(
+        hemi ~ sex_label,
+        labeller = labeller(hemi = c(left = "Left hemisphere", right = "Right hemisphere"))
+      ) +
       scale_colour_manual(values = pal_pair) +
       scale_linetype_manual(values = linetype_pair) +
       coord_cartesian(ylim = tight_ylim(d$beta)) +
@@ -425,7 +432,7 @@ run_descriptives_for_contrast <- function(cst) {
       ) +
       theme_minimal(base_size = 13) +
       theme(axis.text.x = element_text(angle = 30, hjust = 1), legend.position = "bottom")
-    ggsave(file.path(out_dir, filename), p, width = 9, height = 5, dpi = 180)
+    ggsave(file.path(out_dir, filename), p, width = 10, height = 6.5, dpi = 180)
   }
 
   region_pair_boxplot("amygdala", "rostral middle frontal", "amygdala_vs_rostral_middle_frontal_boxplot.png")

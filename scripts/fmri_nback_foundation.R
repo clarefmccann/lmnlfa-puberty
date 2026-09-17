@@ -64,13 +64,16 @@ dir.create(out_root, showWarnings = FALSE, recursive = TRUE)
 
 script_dir <- Sys.getenv("SGE_O_WORKDIR")
 if (!nzchar(script_dir)) {
-  script_dir <- tryCatch(
-    {
-      ofile <- sys.frames()[[1]]$ofile
-      if (is.null(ofile)) "scripts" else dirname(ofile)
-    },
-    error = function(e) "scripts"
-  )
+  script_dir <- Sys.getenv("SGE_O_WORKDIR")
+  if (!nzchar(script_dir)) {
+    cmd_args <- commandArgs(trailingOnly = FALSE)
+    file_arg <- sub("^--file=", "", cmd_args[grep("^--file=", cmd_args)])
+    script_dir <- if (length(file_arg) > 0) {
+      dirname(normalizePath(file_arg[1]))
+    } else {
+      "scripts"
+    }
+  }
 }
 contrasts_file <- file.path(script_dir, "fmri_contrasts.R")
 if (!file.exists(contrasts_file)) contrasts_file <- file.path("scripts", "fmri_contrasts.R")

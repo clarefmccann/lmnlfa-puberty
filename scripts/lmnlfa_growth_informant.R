@@ -273,7 +273,15 @@ build_lmnlfa_data_informant <- function(
   )
 }
 
-prep <- build_lmnlfa_data_informant(parent_df, youth_df, sx, n_subsample = 1500)
+n_subsample <- NULL
+prep <- build_lmnlfa_data_informant(parent_df, youth_df, sx, n_subsample = n_subsample)
+
+# filename-safe / human-readable tags reflecting the sample used, so a
+# subsampled diagnostic run (e.g. the n=1500 one that validated this model)
+# never collides with or gets silently overwritten/reloaded by a later
+# full-sample run for the same sex
+run_tag <- paste0(sx, if (is.null(n_subsample)) "" else paste0("_n", n_subsample))
+run_label <- paste0(sx, if (is.null(n_subsample)) "" else paste0(" (n=", n_subsample, " subsample)"))
 
 stan_data <- list(
   nobs = prep$nobs,
@@ -309,12 +317,12 @@ stan_model <- cmdstan_model(
 )
 cat("Compiled.\n")
 
-saveRDS(stan_data, file.path(out_dir, paste0("stan_data_", sx, ".rds")))
+saveRDS(stan_data, file.path(out_dir, paste0("stan_data_", run_tag, ".rds")))
 
 # ---------------------------------------------------------------------------
 # FIT
 # ---------------------------------------------------------------------------
-rds_fit <- file.path(out_dir, paste0("fit_", sx, ".rds"))
+rds_fit <- file.path(out_dir, paste0("fit_", run_tag, ".rds"))
 
 if (file.exists(rds_fit)) {
   cat("\nLoading cached fit:", rds_fit, "\n")
@@ -378,7 +386,7 @@ print(
 )
 write.csv(
   growth_summ,
-  file.path(out_dir, paste0("growth_params_", sx, ".csv")),
+  file.path(out_dir, paste0("growth_params_", run_tag, ".csv")),
   row.names = FALSE
 )
 
@@ -397,7 +405,7 @@ scores <- tibble(
 )
 write.csv(
   scores,
-  file.path(out_dir, paste0("growth_factor_scores_", sx, ".csv")),
+  file.path(out_dir, paste0("growth_factor_scores_", run_tag, ".csv")),
   row.names = FALSE
 )
 cat("\nGrowth factor scores written:", nrow(scores), "rows\n")
@@ -419,7 +427,7 @@ traj_df <- map_dfr(samp_idx, function(k) {
 p_spaghetti <- ggplot(traj_df, aes(x = age, y = eta, group = person_idx)) +
   geom_line(alpha = 0.15, linewidth = 0.3, colour = pal_primary) +
   labs(
-    title = paste0("Individual puberty trajectories - ", sx),
+    title = paste0("Individual puberty trajectories - ", run_label),
     subtitle = paste0(
       "Predicted from growth factors (n = ",
       length(samp_idx),
@@ -430,7 +438,7 @@ p_spaghetti <- ggplot(traj_df, aes(x = age, y = eta, group = person_idx)) +
   ) +
   theme_minimal(base_size = 13)
 ggsave(
-  file.path(out_dir, paste0("trajectories_sample_", sx, ".png")),
+  file.path(out_dir, paste0("trajectories_sample_", run_tag, ".png")),
   p_spaghetti,
   width = 8,
   height = 5,
@@ -459,14 +467,14 @@ p_meantraj <- ggplot(mean_traj, aes(x = age)) +
   geom_line(aes(y = eta_med), colour = pal_primary, linewidth = 1.2) +
   geom_hline(yintercept = 0, linetype = "dashed", colour = "grey60") +
   labs(
-    title = paste0("Mean puberty growth trajectory - ", sx),
+    title = paste0("Mean puberty growth trajectory - ", run_label),
     subtitle = "Posterior median + 90% CI",
     x = "Age (years)",
     y = "Latent puberty (eta)"
   ) +
   theme_minimal(base_size = 13)
 ggsave(
-  file.path(out_dir, paste0("mean_trajectory_", sx, ".png")),
+  file.path(out_dir, paste0("mean_trajectory_", run_tag, ".png")),
   p_meantraj,
   width = 7,
   height = 5,
@@ -507,7 +515,7 @@ p_dif <- ggplot(curve_df, aes(x = eta, y = prob, colour = informant, linetype = 
       "Item characteristic curve for '",
       target_item,
       "' by informant - ",
-      sx
+      run_label
     ),
     subtitle = "P(response above lowest category) vs. latent puberty",
     x = "Latent puberty (eta)",
@@ -517,7 +525,7 @@ p_dif <- ggplot(curve_df, aes(x = eta, y = prob, colour = informant, linetype = 
   ) +
   theme_minimal(base_size = 13)
 ggsave(
-  file.path(out_dir, paste0("dif_illustration_informant_", sx, ".png")),
+  file.path(out_dir, paste0("dif_illustration_informant_", run_tag, ".png")),
   p_dif,
   width = 7.5,
   height = 5,

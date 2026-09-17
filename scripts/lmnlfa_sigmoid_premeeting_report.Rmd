@@ -1,0 +1,467 @@
+---
+title: "Pre-Meeting Diagnostics: Staged Sigmoidal L-MNLFA of Pubertal Development"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output:
+  html_document:
+    self_contained: true
+    theme: flatly
+    toc: true
+    toc_float: true
+    df_print: kable
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(tidyr)
+  library(knitr)
+  library(kableExtra)
+})
+
+sshfs_default <- "/private/tmp/sshfs/projects/abcd-projs/dissertation/study1/outputs"
+out_base <- Sys.getenv("OUT_DIR")
+if (!nzchar(out_base) || !dir.exists(out_base)) {
+  out_base <- if (dir.exists(sshfs_default)) sshfs_default else file.path(Sys.getenv("HOME"), "projects/abcd-projs/dissertation/study1/outputs")
+}
+model_dir <- file.path(out_base, "lmnlfa_growth_sigmoid_staged")
+premeeting_dir <- file.path(model_dir, "premeeting")
+
+sexes <- c("female", "male")
+tag <- setNames(paste0(sexes, "_n1500"), sexes)
+
+pth <- function(subfolder, filename_tmpl, sx) {
+  file.path(premeeting_dir, subfolder, sprintf(filename_tmpl, tag[sx]))
+}
+read_csv_safe <- function(path) {
+  if (!file.exists(path)) return(NULL)
+  read.csv(path, check.names = FALSE)
+}
+img_tag <- function(path, alt, width = "100%") {
+  if (!file.exists(path)) {
+    return(sprintf('<p><em>[Figure not available: %s]</em></p>', basename(path)))
+  }
+  sprintf('<img src="%s" alt="%s" style="width:%s;max-width:600px;border:1px solid #ddd;padding:4px;"/>', path, alt, width)
+}
+kbl_html <- function(df, digits = 3, caption = NULL, highlight = FALSE) {
+  if (is.null(df) || nrow(df) == 0) return('<p><em>No data.</em></p>')
+  k <- kbl(df, digits = digits, caption = caption, row.names = FALSE) %>%
+    kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = TRUE, font_size = 12)
+  if (highlight && "rhat" %in% names(df) && "ess_bulk" %in% names(df)) {
+    bad <- which(df$rhat > 1.01 | df$ess_bulk < 400)
+    if (length(bad) > 0) k <- row_spec(k, bad, background = "#FFF3B0")
+  }
+  as.character(k)
+}
+sex_panel <- function(label_fn) {
+  cat('<div style="display:flex;gap:20px;flex-wrap:wrap;margin-bottom:24px;">\n')
+  for (sx in sexes) {
+    cat(sprintf('<div style="flex:1;min-width:340px;">\n<h4>%s</h4>\n', tools::toTitleCase(sx)))
+    cat(label_fn(sx))
+    cat('</div>\n')
+  }
+  cat('</div>\n')
+}
+missing_stage_note <- function(sx, stage_letter) {
+  sprintf('<p><em>Stage %s fit not available for %s.</em></p>', stage_letter, sx)
+}
+questions_box <- function(qs) {
+  items <- paste(sprintf('<li>%s</li>', qs), collapse = "\n")
+  sprintf(
+    '<div style="background:#eef6fb;border-left:4px solid #335C67;padding:8px 16px;margin:10px 0;"><strong>Questions to ask:</strong><ul style="margin-bottom:0;">%s</ul></div>',
+    items
+  )
+}
+
+# ---- context figures: copies of existing project figures (sample timelines,
+# raw-vs-model overlays), resized (sips, macOS) so the self-contained HTML
+# stays a reasonable email attachment size. Source figures are NOT modified;
+# these are one-time copies written to premeeting/context/. If sips isn't
+# available (non-macOS), the original (larger) file is copied as-is.
+context_dir <- file.path(premeeting_dir, "context")
+dir.create(context_dir, showWarnings = FALSE, recursive = TRUE)
+context_sources <- c(
+  timeline_modeled = file.path(out_base, "sample_timeline", "timeline_modeled_%s.png"),
+  raw_vs_model = file.path(out_base, "viz_raw_vs_model", "raw_vs_model_%s.png"),
+  raw_traj_youth = file.path(out_base, "viz_raw_vs_model", "raw_trajectories_modeled_sample_%s_youth.png"),
+  raw_traj_caregiver = file.path(out_base, "viz_raw_vs_model", "raw_trajectories_modeled_sample_%s_caregiver.png")
+)
+for (nm in names(context_sources)) {
+  for (sx in sexes) {
+    src <- sprintf(context_sources[[nm]], sx)
+    dest <- file.path(context_dir, basename(src))
+    if (file.exists(src) && (!file.exists(dest) || file.mtime(src) > file.mtime(dest))) {
+      file.copy(src, dest, overwrite = TRUE)
+      if (nzchar(Sys.which("sips"))) system2("sips", c("-Z", "1200", shQuote(dest)), stdout = FALSE, stderr = FALSE)
+    }
+  }
+}
+ctx_path <- function(nm, sx) file.path(context_dir, basename(sprintf(context_sources[[nm]], sx)))
+
+# ---- load everything needed for verdicts up front ----
+waterfall <- lapply(sexes, function(sx) read_csv_safe(pth("data-audit", "waterfall_%s.csv", sx)))
+names(waterfall) <- sexes
+persons_per_wave <- lapply(sexes, function(sx) read_csv_safe(pth("data-audit", "persons_per_wave_%s.csv", sx)))
+names(persons_per_wave) <- sexes
+
+wave_dip_note <- sapply(sexes, function(sx) {
+  d <- persons_per_wave[[sx]]
+  if (is.null(d)) return(sprintf("%s: wave data not available.", sx))
+  d2 <- d %>% group_by(wave) %>% summarize(n_persons = sum(n_persons), .groups = "drop") %>% filter(wave != "bl")
+  dip <- d2[which.min(d2$n_persons), ]
+  others <- d2$n_persons[d2$wave != dip$wave]
+  sprintf("%s: %s is the low point (n=%d combined caregiver+youth) vs %d-%d across the other follow-up waves", tools::toTitleCase(sx), dip$wave, dip$n_persons, min(others), max(others))
+})
+race_counts <- lapply(sexes, function(sx) read_csv_safe(pth("data-audit", "race_group_counts_%s.csv", sx)))
+names(race_counts) <- sexes
+baseline_wave <- lapply(sexes, function(sx) read_csv_safe(pth("data-audit", "baseline_wave_origin_%s.csv", sx)))
+names(baseline_wave) <- sexes
+
+ceil_floor <- lapply(sexes, function(sx) read_csv_safe(pth("ceiling-floor", "ceiling_floor_by_item_%s.csv", sx)))
+names(ceil_floor) <- sexes
+all_ceil <- lapply(sexes, function(sx) read_csv_safe(pth("ceiling-floor", "all_items_ceiling_floor_%s.csv", sx)))
+names(all_ceil) <- sexes
+infl_summ <- lapply(sexes, function(sx) read_csv_safe(pth("ceiling-floor", "inflection_age_summary_%s.csv", sx)))
+names(infl_summ) <- sexes
+pop_curve <- lapply(sexes, function(sx) read_csv_safe(pth("ceiling-floor", "population_mean_curve_range_%s.csv", sx)))
+names(pop_curve) <- sexes
+
+conv_all <- lapply(sexes, function(sx) read_csv_safe(pth("convergence", "convergence_all_params_%s.csv", sx)))
+names(conv_all) <- sexes
+flagged <- lapply(sexes, function(sx) read_csv_safe(pth("convergence", "flagged_params_%s.csv", sx)))
+names(flagged) <- sexes
+diagtab <- lapply(sexes, function(sx) read_csv_safe(pth("convergence", "divergences_treedepth_%s.csv", sx)))
+names(diagtab) <- sexes
+bcor <- lapply(sexes, function(sx) read_csv_safe(pth("convergence", "stageB_growth_age_dif_correlations_%s.csv", sx)))
+names(bcor) <- sexes
+
+sens_grid <- lapply(sexes, function(sx) read_csv_safe(pth("dif-sensitivity", "dif_sensitivity_grid_summary_%s.csv", sx)))
+names(sens_grid) <- sexes
+raw_dif <- lapply(sexes, function(sx) read_csv_safe(pth("dif-sensitivity", "stageB_raw_dif_posteriors_%s.csv", sx)))
+names(raw_dif) <- sexes
+
+impact_cov <- lapply(sexes, function(sx) read_csv_safe(pth("impact-comparison", "stageA_vs_C_impact_covariates_%s.csv", sx)))
+names(impact_cov) <- sexes
+impact_scal <- lapply(sexes, function(sx) read_csv_safe(pth("impact-comparison", "stageA_vs_C_impact_scalars_%s.csv", sx)))
+names(impact_scal) <- sexes
+
+agree <- lapply(sexes, function(sx) read_csv_safe(pth("agreement", "parent_youth_agreement_%s.csv", sx)))
+names(agree) <- sexes
+
+# menarche (fpete) is female-only; these files only exist for sx == "female"
+item5_completeness <- read_csv_safe(pth("item5-exploration", "item5_completeness_vs_other_items_%s.csv", "female"))
+item5_missing <- read_csv_safe(pth("item5-exploration", "item5_missingness_cost_%s.csv", "female"))
+item5_rate <- read_csv_safe(pth("item5-exploration", "item5_rate_by_age_%s.csv", "female"))
+item5_direction <- read_csv_safe(pth("item5-exploration", "item5_direction_summary_%s.csv", "female"))
+item5_steepness <- read_csv_safe(pth("item5-exploration", "item5_steepness_comparison_%s.csv", "female"))
+
+verdict_item5 <- if (is.null(item5_direction)) {
+  "Menarche diagnostics not available for this render."
+} else {
+  sprintf(
+    "Menarche's raw coding runs %s with age (%s the usual PDS 'higher code = more developed' convention), which %s explain the earlier Stage A/B/C convergence failure on its own; it is also a much steeper (near-step-function) item than the four already modeled. Neither issue requires a Stan-file change to fix -- only a coding correction, a possibly wider loading prior, and re-adding it to build_lmnlfa_data_staged().",
+    item5_direction$direction[1],
+    if (item5_direction$coding_matches_assumption[1]) "matching" else "OPPOSITE of",
+    if (!item5_direction$coding_matches_assumption[1]) "plausibly does" else "does not"
+  )
+}
+
+# ---- verdict computations (numbers only; sentence framing is fixed logic) ----
+max_ceiling_any <- max(unlist(lapply(all_ceil, function(x) if (!is.null(x)) max(x$prop_all_ceiling) else NA)), na.rm = TRUE)
+verdict_ceiling <- if (max_ceiling_any > 0.5) {
+  sprintf("A fixed common ceiling looks reasonable for the oldest respondents -- up to %.0f%% of person-occasions have all four items at the top category in the oldest/most-developed cells.", 100 * max_ceiling_any)
+} else {
+  sprintf("A fixed common ceiling is NOT clearly reached for most of the sample -- even the oldest-age, most-developed cell tops out at only %.0f%% of person-occasions with all four items at the top category.", 100 * max_ceiling_any)
+}
+
+max_growth_dif_cor <- max(unlist(lapply(bcor, function(x) {
+  if (is.null(x)) return(NA)
+  rows <- x[x$param %in% c("mu_logk", "mu_alpha"), ]
+  cols <- setdiff(names(x), c("param", "mu_logk", "mu_alpha"))
+  max(abs(as.matrix(rows[, cols])))
+})), na.rm = TRUE)
+verdict_identifiability <- if (max_growth_dif_cor > 0.5) {
+  sprintf("Stage B's growth-curve parameters and age DIF are NOT cleanly separated -- the largest posterior correlation between a growth mean parameter and an age DIF term reaches %.2f across the two sexes.", max_growth_dif_cor)
+} else {
+  sprintf("Stage B's growth-curve parameters and age DIF appear reasonably well identified -- the largest posterior correlation between a growth mean parameter and an age DIF term is %.2f across the two sexes.", max_growth_dif_cor)
+}
+
+sens_range_ratio <- max(unlist(lapply(sens_grid, function(x) {
+  if (is.null(x)) return(NA)
+  rng <- range(x$n_loading_retained)
+  if (rng[2] == 0) return(0)
+  (rng[2] - rng[1]) / rng[2]
+})), na.rm = TRUE)
+verdict_dif_robust <- if (sens_range_ratio > 0.5) {
+  sprintf("The retained DIF set is sensitive to screening thresholds -- the number of retained loading-DIF terms swings by more than %.0f%% of its maximum across the grid of FDR/magnitude-floor settings tested.", 100 * sens_range_ratio)
+} else {
+  sprintf("The retained DIF set is reasonably robust to screening thresholds -- the number of retained loading-DIF terms varies by at most %.0f%% of its maximum across the grid of FDR/magnitude-floor settings tested.", 100 * sens_range_ratio)
+}
+
+max_impact_shift <- max(unlist(lapply(impact_cov, function(x) if (!is.null(x)) max(abs(x$diff_as_frac_A_sd)) else NA)), na.rm = TRUE)
+verdict_impact_bias <- if (max_impact_shift > 1) {
+  sprintf("Stage A impact estimates ARE materially affected by ignoring DIF -- the largest Stage A-to-C shift reaches %.1f Stage-A posterior SDs.", max_impact_shift)
+} else {
+  sprintf("Stage A impact estimates are NOT materially biased by ignoring DIF -- the largest Stage A-to-C shift across both sexes is %.1f Stage-A posterior SDs.", max_impact_shift)
+}
+
+mean_spearman <- mean(unlist(lapply(agree, function(x) if (!is.null(x)) mean(x$spearman_r, na.rm = TRUE) else NA)), na.rm = TRUE)
+mean_within1 <- mean(unlist(lapply(agree, function(x) if (!is.null(x)) weighted.mean(x$within_one, x$n) else NA)), na.rm = TRUE)
+verdict_agreement <- if (mean_spearman > 0.3 && mean_within1 > 0.85) {
+  sprintf("Parent and youth reports plausibly track the same latent quantity -- mean within-one-category agreement is %.0f%% and mean Spearman correlation is %.2f across items/age bands/sexes.", 100 * mean_within1, mean_spearman)
+} else {
+  sprintf("Parent-youth agreement is modest enough to question a shared latent quantity assumption without informant DIF adjustment -- mean within-one-category agreement is %.0f%% and mean Spearman correlation is only %.2f across items/age bands/sexes.", 100 * mean_within1, mean_spearman)
+}
+```
+
+## Context
+
+Reporting on my staged, sigmoidal longitudinal moderated nonlinear factor analysis (L-MNLFA) of pubertal development in the ABCD Study, using the Pubertal Development Scale as reported by both caregivers and youth. Puberty is modeled as a bounded logistic growth curve with a fixed floor (1) and ceiling (5), and two correlated person-specific random effects -- a log-rate ("tempo") and an inflection age ("timing") -- estimated in three stages: growth-factor impact only (Stage A), DIF screening with impact fixed (Stage B), and a final combined fit with impact free and only the screened DIF terms retained (Stage C). Caregiver and youth reports enter as separate informant-level rows, so reporter-related measurement bias can be tested directly as DIF alongside age, race/ethnicity, and waist-to-height ratio (WtHR). Female and male results are shown side by side in every section below.
+
+---
+
+## 0. Sample & raw-data context
+
+**Verdict:** The raw (unmodeled) score trajectories visibly flatten with age in a way broadly consistent with a sigmoid, and the n=1,500 modeled subsample's wave-coverage pattern mirrors the full sample's -- including the same fu3 dip, which reflects a real assessment-timing gap in the data, not an artifact of subsampling.
+
+```{r sec0, results='asis'}
+sex_panel(function(sx) {
+  out <- paste0(
+    "<p><strong>Sample timeline (n=1,500 modeled subsample)</strong> -- each row is one person, colored by wave completed</p>",
+    img_tag(ctx_path("timeline_modeled", sx), paste("Sample timeline,", sx))
+  )
+  out <- paste0(out, "<p><strong>Raw vs. fitted model trajectory</strong></p>", img_tag(ctx_path("raw_vs_model", sx), paste("Raw vs model,", sx)))
+  out <- paste0(out, "<p><strong>Raw item trajectories, modeled sample -- youth-reported</strong></p>", img_tag(ctx_path("raw_traj_youth", sx), paste("Raw trajectories youth,", sx)))
+  out <- paste0(out, "<p><strong>Raw item trajectories, modeled sample -- caregiver-reported</strong></p>", img_tag(ctx_path("raw_traj_caregiver", sx), paste("Raw trajectories caregiver,", sx)))
+  out
+})
+cat(questions_box(c(
+  "Does the raw (unmodeled) trajectory shape in <code>raw_vs_model_&lt;sex&gt;.png</code> look sigmoidal to you -- i.e. does the model's functional-form choice look right on the raw data, independent of the fitted curve?",
+  sprintf("Wave coverage dips at a specific follow-up wave in both sexes (%s; %s) -- does it warrant a robustness check excluding or reweighting that wave?", wave_dip_note[1], wave_dip_note[2]),
+  "Do the youth- vs. caregiver-reported raw trajectories look like they're tracking the same underlying process?"
+)))
+```
+
+---
+
+## 1. Data audit
+
+**Verdict:** Roughly two-thirds to three-quarters of raw person-occasion rows survive the full cleaning pipeline (age/race/WtHR completeness and range, item completeness, mapped race group), and a small (<5%) share of the analysis sample's "baseline" WtHR value actually comes from a later wave because true baseline was filtered out for those people.
+
+```{r sec1, results='asis'}
+sex_panel(function(sx) {
+  out <- ""
+  wf <- waterfall[[sx]]
+  if (!is.null(wf)) out <- paste0(out, "<p><strong>Filtering waterfall</strong></p>", kbl_html(wf, digits = 0))
+  bw <- baseline_wave[[sx]]
+  if (!is.null(bw)) {
+    n_not_bl <- sum(bw$n_persons[!bw$is_baseline_wave])
+    pct <- round(100 * n_not_bl / sum(bw$n_persons), 1)
+    out <- paste0(out, sprintf("<p><strong>Baseline-occasion wave origin</strong> (%d people, %.1f%%, drawn from a non-bl wave)</p>", n_not_bl, pct), kbl_html(bw, digits = 0))
+  }
+  rc <- race_counts[[sx]]
+  if (!is.null(rc)) out <- paste0(out, "<p><strong>Race group counts (analysis sample)</strong></p>", kbl_html(rc, digits = 0))
+  out
+})
+cat(questions_box(c(
+  "More of a note to myself: Roughly a third of raw rows are dropped in the filtering waterfall above -- we should check whether dropped rows are systematically different by race or site, given Hispanic and Black are already the two smallest retained race groups.",
+  "Is the share of people whose 'baseline' WtHR is drawn from a non-bl wave (see the baseline-occasion table above) small enough to ignore, or should those people be flagged/excluded in a sensitivity check on the WtHR impact estimate?"
+)))
+```
+
+---
+
+## 2. Ceiling / floor support
+
+**Verdict:** `r verdict_ceiling`
+
+```{r sec2, results='asis'}
+sex_panel(function(sx) {
+  out <- ""
+  pc <- pop_curve[[sx]]
+  if (!is.null(pc)) {
+    out <- paste0(out, "<p><strong>Population-mean curve at observed age extremes</strong></p>", kbl_html(pc, digits = 3))
+  }
+  isumm <- infl_summ[[sx]]
+  if (!is.null(isumm)) {
+    out <- paste0(out, "<p><strong>Inflection-age distribution</strong></p>", kbl_html(isumm, digits = 2))
+    out <- paste0(out, img_tag(pth("ceiling-floor", "inflection_age_histogram_%s.png", sx), paste("Inflection age histogram,", sx)))
+  }
+  out <- paste0(out, "<p><strong>All-items-at-ceiling/floor by age band</strong></p>")
+  ac <- all_ceil[[sx]]
+  if (!is.null(ac)) out <- paste0(out, kbl_html(ac, digits = 3))
+  if (sx == "male") {
+    out <- paste0(out, '<p><em>Facial hair (mpete) is included as a 5th item below, matched to the same modeled person-occasions -- it is decided to be added to the full model on the next rerun.</em></p>')
+  }
+  out <- paste0(out, img_tag(pth("ceiling-floor", "ceiling_floor_by_item_%s.png", sx), paste("Ceiling/floor by item,", sx)))
+  out
+})
+cat(questions_box(c(
+  "Male item-level ceiling rates at 15+ are consistently lower than female (see the ceiling/floor-by-item figure above and Section 0's raw trajectories) -- reflects a real sex difference in development, and/or is ABCD's age range simply too truncated to observe most males finishing puberty, which would argue for caution interpreting phi_alpha (inflection-age variance) for males?",
+  "None of the individual inflection ages fall outside the observed age range for either sex -- given that, is a FIXED floor/ceiling still preferred over freeing the ceiling as an estimated parameter, now that we can see it isn't forcing extrapolation?"
+)))
+```
+
+---
+
+## 3. Convergence, focused on the DIF-vs-growth confound
+
+**Verdict:** `r verdict_identifiability`
+
+```{r sec3, results='asis'}
+sex_panel(function(sx) {
+  out <- ""
+  dt <- diagtab[[sx]]
+  if (!is.null(dt)) out <- paste0(out, "<p><strong>Divergences / max-treedepth by stage</strong></p>", kbl_html(dt, digits = 0))
+  fl <- flagged[[sx]]
+  if (!is.null(fl)) {
+    out <- paste0(out, sprintf("<p><strong>%d flagged parameters</strong> (rhat &gt; 1.01 or ess_bulk &lt; 400)</p>", nrow(fl)))
+    out <- paste0(out, kbl_html(head(fl, 20), digits = 3, highlight = TRUE))
+    if (nrow(fl) > 20) out <- paste0(out, sprintf("<p><em>(%d more in the appendix)</em></p>", nrow(fl) - 20))
+  }
+  out <- paste0(out, "<p><strong>Stage B: growth params vs age-DIF posterior correlations</strong></p>")
+  bc <- bcor[[sx]]
+  if (!is.null(bc)) out <- paste0(out, kbl_html(bc, digits = 2))
+  out <- paste0(out, img_tag(pth("convergence", "stageB_growth_age_dif_cor_heatmap_%s.png", sx), paste("Growth x age-DIF correlation heatmap,", sx)))
+  out
+})
+cat(questions_box(c(
+  "The mu_alpha/age-loading-DIF correlations in the heatmap above reach the mid-.80s for males -- is BH-FDR screening on Stage B adequate given that level of confounding, or does this specific finding argue for running the already-built spike-and-slab alternative (joint shrinkage instead of post-hoc screening) before trusting Stage C's retained age-DIF pattern?",
+  "Since age is both the growth curve's own axis and a DIF covariate, would you rather see age-varying item loadings modeled as part of the growth structure itself (e.g., a smooth loading-by-age term) rather than as a separate DIF effect competing with mu_alpha for the same variation?"
+)))
+```
+
+<details><summary><strong>Appendix: full per-stage parameter tables</strong></summary>
+
+```{r sec3-appendix, results='asis'}
+for (sx in sexes) {
+  cat(sprintf("<h4>%s</h4>\n", tools::toTitleCase(sx)))
+  ca <- conv_all[[sx]]
+  if (!is.null(ca)) cat(kbl_html(ca, digits = 3, highlight = TRUE))
+}
+```
+
+</details>
+
+---
+
+## 4. DIF screening sensitivity
+
+**Verdict:** `r verdict_dif_robust`
+
+```{r sec4, results='asis'}
+sex_panel(function(sx) {
+  out <- "<p><strong>Retained DIF terms across the FDR-q x magnitude-floor grid</strong></p>"
+  sg <- sens_grid[[sx]]
+  if (!is.null(sg)) out <- paste0(out, kbl_html(sg, digits = 3))
+  out <- paste0(out, img_tag(pth("dif-sensitivity", "dif_sensitivity_heatmap_%s.png", sx), paste("DIF sensitivity heatmap,", sx)))
+  out
+})
+cat(questions_box(c(
+  "The male grid (see the sensitivity table above) drops from 10 to 0 retained loading-DIF terms between a magnitude floor of .05 and .2 -- independent of what maximizes retained terms, what magnitude floor would you consider defensible for this response scale?",
+  "Given the retained set changes this much across plausible threshold choices, should the write-up report a single 'selected' DIF pattern, or present Stage C results under 2-3 alternative screening thresholds as a robustness check?"
+)))
+```
+
+<details><summary><strong>Appendix: raw Stage B DIF posterior means and 90% CIs</strong></summary>
+
+```{r sec4-appendix, results='asis'}
+for (sx in sexes) {
+  cat(sprintf("<h4>%s</h4>\n", tools::toTitleCase(sx)))
+  rd <- raw_dif[[sx]]
+  if (!is.null(rd)) cat(kbl_html(rd, digits = 3))
+}
+```
+
+</details>
+
+---
+
+## 5. Stage A vs Stage C impact
+
+**Verdict:** `r verdict_impact_bias`
+
+```{r sec5, results='asis'}
+sex_panel(function(sx) {
+  out <- "<p><strong>By covariate (growth-curve impact)</strong></p>"
+  ic <- impact_cov[[sx]]
+  if (!is.null(ic)) out <- paste0(out, kbl_html(ic, digits = 3))
+  out <- paste0(out, "<p><strong>Scalar growth parameters</strong></p>")
+  isc <- impact_scal[[sx]]
+  if (!is.null(isc)) out <- paste0(out, kbl_html(isc, digits = 3))
+  out <- paste0(out, img_tag(pth("impact-comparison", "stageA_vs_C_impact_plot_%s.png", sx), paste("Stage A vs C impact,", sx)))
+  out
+})
+```
+
+---
+
+## 6. Caregiver-youth agreement
+
+**Verdict:** `r verdict_agreement`
+
+```{r sec6, results='asis'}
+sex_panel(function(sx) {
+  out <- "<p><strong>Agreement by item x age band</strong></p>"
+  ag <- agree[[sx]]
+  if (!is.null(ag)) out <- paste0(out, kbl_html(ag, digits = 3))
+  out <- paste0(out, img_tag(pth("agreement", "parent_youth_mean_diff_%s.png", sx), paste("Mean signed caregiver-youth difference,", sx)))
+  out
+})
+cat(questions_box(c(
+  "Exact agreement is only ~56% while within-one-category agreement is ~93% -- should the informant DIF terms already retained in Stage C be interpreted as correcting genuine reporter bias, or could collapsing PDS items to fewer response categories be a simpler, more defensible fix?",
+  "Does the mean-signed-difference plot above show a trend across age bands (reporter divergence changing over development), or is it flat enough to treat informant bias as roughly constant with age?"
+)))
+```
+
+---
+
+## 7. Menarche (fpete): diagnosing the convergence failure
+
+Menarche (`fpete`, binary, female only) previously caused Stage A/B/C convergence problems when included, so it isn't in the current model. The diagnostics below exist to diagnose *why* menarche broke convergence.
+
+**Verdict:** `r verdict_item5`
+
+```{r sec7, results='asis'}
+out <- ""
+if (!is.null(item5_direction)) {
+  flag <- if (!item5_direction$coding_matches_assumption[1]) {
+    '<p style="color:#9E2A2B;"><strong>Coding direction is INVERTED</strong> relative to the other PDS items -- code %d (not the larger number) is the "developed/reached" response.</p>'
+  } else {
+    '<p>Coding direction matches the other PDS items (higher code = more developed).</p>'
+  }
+  out <- paste0(out, "<p><strong>Candidate cause 1 -- coding direction:</strong> raw response-rate trend with age is '", item5_direction$direction[1], "'.</p>",
+    sprintf(flag, item5_direction$developed_code[1]))
+}
+if (!is.null(item5_steepness)) {
+  item5_jump <- max(abs(diff(item5_rate$prop_developed[item5_rate$reporter == "parent"])))
+  out <- paste0(out, sprintf(
+    "<p><strong>Candidate cause 2 -- steepness:</strong> menarche's largest single-age-band jump in 'developed' proportion is %.2f, vs. an average of %.2f across the four modeled items' ceiling proportions (~%.1fx steeper).</p>",
+    item5_jump, mean(item5_steepness$max_jump), item5_jump / mean(item5_steepness$max_jump)
+  ))
+  out <- paste0(out, "<p><em>Steepness comparison (largest age-band jump, by item)</em></p>", kbl_html(
+    bind_rows(item5_steepness, tibble(item = "Menarche (fpete)", max_jump = item5_jump)), digits = 3
+  ))
+}
+ct <- item5_completeness
+if (!is.null(ct)) out <- paste0(out, "<p><strong>Completeness vs. the four modeled items</strong> (among age/race/WtHR-filtered rows) -- ruled out as a contributing cause</p>", kbl_html(ct, digits = 1))
+mt <- item5_missing
+if (!is.null(mt)) out <- paste0(out, "<p><em>Cost of also requiring menarche</em> (among occasions already passing the current 4-item filter)</p>", kbl_html(mt, digits = 1))
+rt <- item5_rate
+if (!is.null(rt)) out <- paste0(out, "<p><strong>Response rate by age band x informant</strong></p>", kbl_html(rt, digits = 3))
+out <- paste0(out, img_tag(pth("item5-exploration", "item5_rate_by_age_%s.png", "female"), "Menarche rate by age"))
+cat(sprintf('<div style="max-width:700px;">%s</div>', out))
+cat(questions_box(c(
+  "Does the coding-direction inversion alone plausibly account for the earlier non-convergence, or is the steepness (near-step-function transition) likely a separate, additional contributor that would need its own fix (e.g. a wider loading prior) even after the coding is corrected?"
+)))
+```
+
+---
+
+## Open decisions
+
+- **Fixed common ceiling.** `r verdict_ceiling`
+- **Stage B identifiability of growth curve vs age DIF.** `r verdict_identifiability`
+- **Robustness of the retained DIF set.** `r verdict_dif_robust`
+- **Shared latent eta across informants.** `r verdict_agreement`

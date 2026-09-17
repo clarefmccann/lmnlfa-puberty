@@ -33,13 +33,16 @@ if (!nzchar(out_base)) out_base <- data_dir
 out_dir <- file.path(out_base, "sample_timeline")
 dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
 
-script_dir <- tryCatch(
-  {
-    ofile <- sys.frames()[[1]]$ofile
-    if (is.null(ofile)) "scripts" else dirname(ofile)
-  },
-  error = function(e) "scripts"
-)
+script_dir <- Sys.getenv("SGE_O_WORKDIR")
+if (!nzchar(script_dir)) {
+  cmd_args <- commandArgs(trailingOnly = FALSE)
+  file_arg <- sub("^--file=", "", cmd_args[grep("^--file=", cmd_args)])
+  script_dir <- if (length(file_arg) > 0) {
+    dirname(normalizePath(file_arg[1]))
+  } else {
+    "scripts"
+  }
+}
 palette_file <- file.path(script_dir, "color_palette.R")
 if (!file.exists(palette_file)) palette_file <- file.path("scripts", "color_palette.R")
 source(palette_file)
@@ -107,14 +110,14 @@ make_timeline_plot <- function(pdat, title_suffix) {
     geom_segment(
       data = pdat %>% filter(!is.na(age_prev)),
       aes(x = age_prev, xend = age, y = id_rank, yend = id_rank, colour = wave_label),
-      alpha = 0.08,
-      linewidth = 0.2
+      alpha = 0.1,
+      linewidth = 0.35
     ) +
     geom_point(
       aes(colour = wave_label, shape = wave_label),
       alpha = 0.5,
-      size = 0.7,
-      stroke = 0.4
+      size = 0.9,
+      stroke = 0.5
     ) +
     scale_colour_manual(
       values = wave_palette,
@@ -126,7 +129,7 @@ make_timeline_plot <- function(pdat, title_suffix) {
       breaks = as.character(wave_labels),
       name = "Wave"
     ) +
-    guides(colour = guide_legend(override.aes = list(alpha = 1, size = 2.5))) +
+    guides(colour = guide_legend(override.aes = list(alpha = 1, size = 3, linewidth = 2))) +
     labs(
       title = paste0("Data availability across the sample", title_suffix),
       subtitle = paste0(

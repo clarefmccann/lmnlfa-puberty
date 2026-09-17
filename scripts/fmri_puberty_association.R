@@ -43,13 +43,16 @@ if (!nzchar(data_dir) || !dir.exists(data_dir)) {
 out_base <- Sys.getenv("OUT_DIR")
 if (!nzchar(out_base)) out_base <- data_dir
 
-script_dir <- tryCatch(
-  {
-    ofile <- sys.frames()[[1]]$ofile
-    if (is.null(ofile)) "scripts" else dirname(ofile)
-  },
-  error = function(e) "scripts"
-)
+script_dir <- Sys.getenv("SGE_O_WORKDIR")
+if (!nzchar(script_dir)) {
+  cmd_args <- commandArgs(trailingOnly = FALSE)
+  file_arg <- sub("^--file=", "", cmd_args[grep("^--file=", cmd_args)])
+  script_dir <- if (length(file_arg) > 0) {
+    dirname(normalizePath(file_arg[1]))
+  } else {
+    "scripts"
+  }
+}
 palette_file <- file.path(script_dir, "color_palette.R")
 if (!file.exists(palette_file)) palette_file <- file.path("scripts", "color_palette.R")
 source(palette_file)
@@ -227,6 +230,16 @@ run_association_for_contrast <- function(cst) {
     row.names = FALSE
   )
 
+  region_sex_cor <- beta_long %>%
+    group_by(region_key, atlas, hemi, region_label, sex_label) %>%
+    summarise(r = safe_cor(beta, eta_mean), n = n(), .groups = "drop") %>%
+    arrange(desc(abs(r)))
+  write.csv(
+    region_sex_cor,
+    file.path(out_dir, "region_sex_puberty_correlation.csv"),
+    row.names = FALSE
+  )
+
   region_pooled_cor <- beta_long %>%
     group_by(region_key, atlas, hemi, region_label) %>%
     summarise(r = safe_cor(beta, eta_mean), n = n(), .groups = "drop") %>%
@@ -239,6 +252,14 @@ run_association_for_contrast <- function(cst) {
 
   cat("Top 10 |r(beta, puberty factor score)| regions (pooled across wave/sex):\n")
   print(as.data.frame(head(region_pooled_cor, 10)), digits = 3)
+
+  for (sx in c("Female", "Male")) {
+    cat("\nTop 5 |r| regions,", sx, "(pooled across wave):\n")
+    print(
+      as.data.frame(head(region_sex_cor %>% filter(sex_label == sx), 5)),
+      digits = 3
+    )
+  }
 
   # -------------------------------------------------------------------------
   # (2) Global mean beta (averaged across all regions) vs. puberty factor
