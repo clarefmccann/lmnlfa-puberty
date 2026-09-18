@@ -71,33 +71,49 @@ palette_file <- file.path(script_dir, "color_palette.R")
 if (!file.exists(palette_file)) palette_file <- file.path("scripts", "color_palette.R")
 source(palette_file)
 
-# DATA_DIR (explicit override, e.g. set by an HPC job script) wins if set.
-# Otherwise prefer the known sshfs project path over HOME_DIR/HOME-derived
-# guesses -- HOME_DIR is sometimes aliased locally to an unrelated synced
-# mirror that does NOT receive freshly-written HPC model outputs, which
-# would silently (and wrongly) make this script think no model has been
-# fit yet. Only fall back to HOME_DIR/HOME construction if the sshfs path
-# isn't present at all (e.g. running directly on the cluster).
+# DATA_DIR/OUT_DIR (explicit override, e.g. set by an HPC job script) win if
+# set. Otherwise prefer the known sshfs project path over HOME_DIR/HOME-
+# derived guesses -- HOME_DIR is sometimes aliased locally to an unrelated
+# synced mirror that does NOT receive freshly-written HPC model outputs,
+# which would silently (and wrongly) make this script think no model has
+# been fit yet. Only fall back to HOME_DIR/HOME construction if the sshfs
+# path isn't present at all (e.g. running directly on the cluster).
+# data_dir = raw parent/youth long CSVs; out_base = model outputs (both this
+# script's own, and lmnlfa_growth_sigmoid_staged.R's cached fits it reads).
 data_dir <- Sys.getenv("DATA_DIR")
-sshfs_data_dir <- "/private/tmp/sshfs/projects/abcd-projs/dissertation/study1/outputs"
+sshfs_data_dir <- "/private/tmp/sshfs/projects/abcd-projs/dissertation/study1/data"
 if (!nzchar(data_dir) || !dir.exists(data_dir)) {
   if (dir.exists(sshfs_data_dir)) {
     data_dir <- sshfs_data_dir
   } else {
     root_path <- Sys.getenv("HOME_DIR")
     if (!nzchar(root_path)) root_path <- Sys.getenv("HOME")
-    data_dir <- file.path(root_path, "projects/abcd-projs/dissertation/study1/outputs")
+    data_dir <- file.path(root_path, "projects/abcd-projs/dissertation/study1/data")
   }
 }
 if (!dir.exists(data_dir)) stop("Cannot locate data directory: ", data_dir)
 
-model_out_dir <- file.path(data_dir, "lmnlfa_growth_sigmoid_staged")
+out_base <- Sys.getenv("OUT_DIR")
+sshfs_out_base <- "/private/tmp/sshfs/projects/abcd-projs/dissertation/study1/outputs"
+if (!nzchar(out_base) || !dir.exists(out_base)) {
+  if (dir.exists(sshfs_out_base)) {
+    out_base <- sshfs_out_base
+  } else {
+    root_path <- Sys.getenv("HOME_DIR")
+    if (!nzchar(root_path)) root_path <- Sys.getenv("HOME")
+    out_base <- file.path(root_path, "projects/abcd-projs/dissertation/study1/outputs")
+  }
+}
+if (!dir.exists(out_base)) stop("Cannot locate output directory: ", out_base)
+
+model_out_dir <- file.path(out_base, "lmnlfa_growth_sigmoid_staged")
 model_fits_dir <- file.path(model_out_dir, "fits") # cached .rds fits live here, not flat in model_out_dir
 
-out_dir <- file.path(data_dir, "viz_raw_vs_model")
+out_dir <- file.path(out_base, "viz_raw_vs_model")
 dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
 
 cat("Data dir: ", data_dir, "\n")
+cat("Out base: ", out_base, "\n")
 cat("Model dir:", model_out_dir, "\n")
 cat("Out dir:  ", out_dir, "\n")
 

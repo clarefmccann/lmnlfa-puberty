@@ -26,11 +26,11 @@ if (!nzchar(root_path)) root_path <- Sys.getenv("HOME")
 
 data_dir <- Sys.getenv("DATA_DIR")
 if (!nzchar(data_dir) || !dir.exists(data_dir)) {
-  data_dir <- file.path(root_path, "projects/abcd-projs/dissertation/study1/outputs")
+  data_dir <- file.path(root_path, "projects/abcd-projs/dissertation/study1/data")
 }
 out_base <- Sys.getenv("OUT_DIR")
-if (!nzchar(out_base)) out_base <- data_dir
-out_dir <- file.path(out_base, "sample_timeline")
+if (!nzchar(out_base)) out_base <- file.path(root_path, "projects/abcd-projs/dissertation/study1/outputs")
+out_dir <- file.path(out_base, "exploration", "sample_timeline")
 dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
 
 script_dir <- Sys.getenv("SGE_O_WORKDIR")

@@ -26,19 +26,30 @@ suppressPackageStartupMessages({
 })
 
 data_dir <- Sys.getenv("DATA_DIR")
-sshfs_data_dir <- "/private/tmp/sshfs/projects/abcd-projs/dissertation/study1/outputs"
+sshfs_data_dir <- "/private/tmp/sshfs/projects/abcd-projs/dissertation/study1/data"
 if (!nzchar(data_dir) || !dir.exists(data_dir)) {
   if (dir.exists(sshfs_data_dir)) {
     data_dir <- sshfs_data_dir
   } else {
     root_path <- Sys.getenv("HOME_DIR")
     if (!nzchar(root_path)) root_path <- Sys.getenv("HOME")
-    data_dir <- file.path(root_path, "projects/abcd-projs/dissertation/study1/outputs")
+    data_dir <- file.path(root_path, "projects/abcd-projs/dissertation/study1/data")
   }
 }
 if (!dir.exists(data_dir)) stop("Cannot locate data directory: ", data_dir)
 
-out_dir <- file.path(data_dir, "sample_timeline")
+out_base <- Sys.getenv("OUT_DIR")
+sshfs_out_base <- "/private/tmp/sshfs/projects/abcd-projs/dissertation/study1/outputs"
+if (!nzchar(out_base) || !dir.exists(out_base)) {
+  if (dir.exists(sshfs_out_base)) {
+    out_base <- sshfs_out_base
+  } else {
+    root_path <- Sys.getenv("HOME_DIR")
+    if (!nzchar(root_path)) root_path <- Sys.getenv("HOME")
+    out_base <- file.path(root_path, "projects/abcd-projs/dissertation/study1/outputs")
+  }
+}
+out_dir <- file.path(out_base, "exploration", "sample_timeline")
 dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
 
 script_dir <- Sys.getenv("SGE_O_WORKDIR")

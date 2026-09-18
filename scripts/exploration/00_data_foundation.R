@@ -4,7 +4,7 @@
 ## long-format datasets for each sex × reporter combination.
 
 # export DATA_DIR="/u/project/silvers/data/ABCD/ABCD-release-6.0/cfm/physical-health/puberty"
-# export OUT_DIR="/u/home/c/clarefmc/projects/abcd-projs/dissertation/study1/outputs"
+# export OUT_DIR="/u/home/c/clarefmc/projects/abcd-projs/dissertation/study1/data"
 # Rscript 01_data_foundation.R
 
 library(dplyr)
@@ -31,8 +31,9 @@ if (!dir.exists(data_root)) {
 
 out_root <- file.path(
   root_path,
-  "projects/abcd-projs/dissertation/study1/outputs"
+  "projects/abcd-projs/dissertation/study1/data"
 )
+dir.create(out_root, showWarnings = FALSE, recursive = TRUE)
 
 # ---------------------------------------------------------------------------
 # LOAD DATA

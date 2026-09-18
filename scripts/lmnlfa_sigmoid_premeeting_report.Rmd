@@ -82,7 +82,7 @@ questions_box <- function(qs) {
 context_dir <- file.path(premeeting_dir, "context")
 dir.create(context_dir, showWarnings = FALSE, recursive = TRUE)
 context_sources <- c(
-  timeline_modeled = file.path(out_base, "sample_timeline", "timeline_modeled_%s.png"),
+  timeline_modeled = file.path(out_base, "exploration", "sample_timeline", "timeline_modeled_%s.png"),
   raw_vs_model = file.path(out_base, "viz_raw_vs_model", "raw_vs_model_%s.png"),
   raw_traj_youth = file.path(out_base, "viz_raw_vs_model", "raw_trajectories_modeled_sample_%s_youth.png"),
   raw_traj_caregiver = file.path(out_base, "viz_raw_vs_model", "raw_trajectories_modeled_sample_%s_caregiver.png")

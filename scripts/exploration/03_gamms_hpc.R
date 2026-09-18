@@ -57,7 +57,7 @@ if (!nzchar(data_dir) || !dir.exists(data_dir)) {
   data_dir <- file.path(
     root_path,
     "projects/abcd-projs",
-    "dissertation/study1/outputs"
+    "dissertation/study1/data"
   )
 }
 if (!dir.exists(data_dir)) {

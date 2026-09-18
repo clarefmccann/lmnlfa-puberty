@@ -133,14 +133,14 @@ if (!nzchar(root_path)) {
 }
 
 data_dir <- Sys.getenv("DATA_DIR")
-sshfs_data_dir <- "/private/tmp/sshfs/projects/abcd-projs/dissertation/study1/outputs"
+sshfs_data_dir <- "/private/tmp/sshfs/projects/abcd-projs/dissertation/study1/data"
 if (!nzchar(data_dir) || !dir.exists(data_dir)) {
   if (dir.exists(sshfs_data_dir)) {
     data_dir <- sshfs_data_dir
   } else {
     data_dir <- file.path(
       root_path,
-      "projects/abcd-projs/dissertation/study1/outputs"
+      "projects/abcd-projs/dissertation/study1/data"
     )
   }
 }
@@ -149,8 +149,16 @@ if (!dir.exists(data_dir)) {
 }
 
 out_base <- Sys.getenv("OUT_DIR")
-if (!nzchar(out_base)) {
-  out_base <- data_dir
+sshfs_out_base <- "/private/tmp/sshfs/projects/abcd-projs/dissertation/study1/outputs"
+if (!nzchar(out_base) || !dir.exists(out_base)) {
+  if (dir.exists(sshfs_out_base)) {
+    out_base <- sshfs_out_base
+  } else {
+    out_base <- file.path(
+      root_path,
+      "projects/abcd-projs/dissertation/study1/outputs"
+    )
+  }
 }
 
 # Stage A is SHARED with the BH-FDR run -- read-only reference, never
