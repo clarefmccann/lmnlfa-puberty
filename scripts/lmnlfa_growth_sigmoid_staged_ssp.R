@@ -75,7 +75,14 @@ options(error = function() {
   cat("\n\n=== FATAL ERROR TRACEBACK ===\n", file = stderr())
   calls <- sys.calls()
   for (i in rev(seq_along(calls))) {
-    cat(i, ": ", paste(deparse(calls[[i]]), collapse = " "), "\n", sep = "", file = stderr())
+    cat(
+      i,
+      ": ",
+      paste(deparse(calls[[i]]), collapse = " "),
+      "\n",
+      sep = "",
+      file = stderr()
+    )
   }
   cat("=== END TRACEBACK ===\n\n", file = stderr())
   flush(stdout())
@@ -86,7 +93,7 @@ options(error = function() {
 # ---------------------------------------------------------------------------
 # STAGE SWITCHES + SSP SETTINGS -- review before running
 # ---------------------------------------------------------------------------
-run_stage_B <- FALSE
+run_stage_B <- TRUE
 run_stage_C <- FALSE
 n_subsample <- 1500 # MUST match the BH-FDR run's n_subsample -- same sample
 
@@ -131,7 +138,10 @@ if (!nzchar(data_dir) || !dir.exists(data_dir)) {
   if (dir.exists(sshfs_data_dir)) {
     data_dir <- sshfs_data_dir
   } else {
-    data_dir <- file.path(root_path, "projects/abcd-projs/dissertation/study1/outputs")
+    data_dir <- file.path(
+      root_path,
+      "projects/abcd-projs/dissertation/study1/outputs"
+    )
   }
 }
 if (!dir.exists(data_dir)) {
@@ -158,8 +168,13 @@ trajectories_dir <- file.path(out_dir, "trajectories")
 impact_comparisons_dir <- file.path(out_dir, "impact-comparisons")
 dif_illustrations_dir <- file.path(out_dir, "dif-illustrations")
 for (d in c(
-  out_dir, fits_dir, dif_selection_dir, pubertal_estimates_dir,
-  trajectories_dir, impact_comparisons_dir, dif_illustrations_dir
+  out_dir,
+  fits_dir,
+  dif_selection_dir,
+  pubertal_estimates_dir,
+  trajectories_dir,
+  impact_comparisons_dir,
+  dif_illustrations_dir
 )) {
   dir.create(d, showWarnings = FALSE, recursive = TRUE)
 }
@@ -403,7 +418,14 @@ prep <- build_lmnlfa_data_staged(
 ximp <- prep$person_covars %>%
   select(race_c1, race_c2, race_c3, whtr_baseline_c) %>%
   as.matrix()
-dif_covar_names <- c("age", "race_c1", "race_c2", "race_c3", "whtr", "informant")
+dif_covar_names <- c(
+  "age",
+  "race_c1",
+  "race_c2",
+  "race_c3",
+  "whtr",
+  "informant"
+)
 xdif <- prep$dat_long %>%
   select(age_c, race_c1, race_c2, race_c3, whtr_c, informant_c) %>%
   as.matrix()
@@ -455,7 +477,9 @@ dir.create(bin_dir, showWarnings = FALSE, recursive = TRUE)
 rds_A <- file.path(bhfdr_fits_dir, paste0("fitA_impact_", run_tag, ".rds"))
 if (!file.exists(rds_A)) {
   stop(
-    "Stage A fit not found at ", rds_A, ". Run lmnlfa_growth_sigmoid_staged.R ",
+    "Stage A fit not found at ",
+    rds_A,
+    ". Run lmnlfa_growth_sigmoid_staged.R ",
     "(with run_stage_A <- TRUE) for this sex FIRST -- Stage A is shared ",
     "between the BH-FDR and SSP pipelines and is not refit here."
   )
@@ -467,7 +491,10 @@ b_mu_logk_fixed <- fitA$summary(variables = "b_mu_logk")$mean
 b_mu_alpha_fixed <- fitA$summary(variables = "b_mu_alpha")$mean
 cat("\nStage A impact estimates (fixed going into Stage B):\n")
 print(setNames(round(b_mu_logk_fixed, 3), paste0("b_mu_logk_", colnames(ximp))))
-print(setNames(round(b_mu_alpha_fixed, 3), paste0("b_mu_alpha_", colnames(ximp))))
+print(setNames(
+  round(b_mu_alpha_fixed, 3),
+  paste0("b_mu_alpha_", colnames(ximp))
+))
 
 # ---------------------------------------------------------------------------
 # STAGE B (SSP): DIF SCREENING VIA SPIKE-AND-SLAB REGULARIZATION
@@ -478,7 +505,9 @@ if (file.exists(rds_B)) {
   cat("\nLoading cached Stage B (SSP) fit:", rds_B, "\n")
   fitB <- readRDS(rds_B)
 } else if (run_stage_B) {
-  cat("\n--- Stage B (SSP): DIF screening via spike-and-slab regularization ---\n")
+  cat(
+    "\n--- Stage B (SSP): DIF screening via spike-and-slab regularization ---\n"
+  )
   stan_model_B <- cmdstan_model(
     stan_file_B_ssp,
     exe_file = file.path(bin_dir, "lmnlfa-growth-sigmoid-difscreen-ssp-local"),
@@ -513,10 +542,17 @@ if (file.exists(rds_B)) {
   )
   r_summ <- fitB$summary(variables = "r_incl")
   cat(
-    "\nr_incl posterior mean distribution -- min:", round(min(r_summ$mean), 3),
-    "| max:", round(max(r_summ$mean), 3),
-    "| n > ", ssp_threshold, ":", sum(r_summ$mean > ssp_threshold),
-    "of", nrow(r_summ), "\n"
+    "\nr_incl posterior mean distribution -- min:",
+    round(min(r_summ$mean), 3),
+    "| max:",
+    round(max(r_summ$mean), 3),
+    "| n > ",
+    ssp_threshold,
+    ":",
+    sum(r_summ$mean > ssp_threshold),
+    "of",
+    nrow(r_summ),
+    "\n"
   )
 } else {
   stop(
@@ -547,19 +583,35 @@ select_dif_ssp <- function(fitB, p, kdif, covar_names, threshold = 0.8) {
   list(l_pattern = pattern, n_pattern = pattern, r_mean = r_mean)
 }
 
-dif_sel <- select_dif_ssp(fitB, prep$p, kdif, dif_covar_names, threshold = ssp_threshold)
-cat("\nDIF selection (spike-and-slab, inclusion threshold =", ssp_threshold, "):\n")
+dif_sel <- select_dif_ssp(
+  fitB,
+  prep$p,
+  kdif,
+  dif_covar_names,
+  threshold = ssp_threshold
+)
+cat(
+  "\nDIF selection (spike-and-slab, inclusion threshold =",
+  ssp_threshold,
+  "):\n"
+)
 cat("Retained (shared loading + intercept pattern):\n")
 print(dif_sel$l_pattern)
 
 write.csv(
   as.data.frame(dif_sel$l_pattern) %>% rownames_to_column("item"),
-  file.path(dif_selection_dir, paste0("dif_selection_loading_", run_tag, ".csv")),
+  file.path(
+    dif_selection_dir,
+    paste0("dif_selection_loading_", run_tag, ".csv")
+  ),
   row.names = FALSE
 )
 write.csv(
   as.data.frame(dif_sel$n_pattern) %>% rownames_to_column("item"),
-  file.path(dif_selection_dir, paste0("dif_selection_intercept_", run_tag, ".csv")),
+  file.path(
+    dif_selection_dir,
+    paste0("dif_selection_intercept_", run_tag, ".csv")
+  ),
   row.names = FALSE
 )
 
@@ -595,7 +647,10 @@ heat_df <- bind_rows(l_heat, n_heat) %>%
       TRUE ~ "Not retained"
     ),
     item_label = factor(item_display[item], levels = rev(unname(item_display))),
-    covar_label = factor(covar_display[covariate], levels = unname(covar_display)),
+    covar_label = factor(
+      covar_display[covariate],
+      levels = unname(covar_display)
+    ),
     half = factor(half, levels = c("Loading", "Intercept"))
   )
 
@@ -607,7 +662,9 @@ heatmap_caption <- if (length(universal_covars) > 0) {
   raw_caption <- paste0(
     covar_list,
     " DIF retained on every item -> unadjusted PDS sums are not directly ",
-    "comparable across levels of ", tolower(covar_list), "."
+    "comparable across levels of ",
+    tolower(covar_list),
+    "."
   )
   paste(strwrap(raw_caption, width = 90), collapse = "\n")
 } else {
@@ -627,7 +684,11 @@ p_dif_heat <- ggplot(heat_df, aes(x = half, y = item_label, fill = status)) +
   ) +
   labs(
     title = paste0("Retained DIF terms (spike-and-slab), ", run_label),
-    subtitle = paste0("Inclusion threshold = ", ssp_threshold, "; shared loading + intercept pattern"),
+    subtitle = paste0(
+      "Inclusion threshold = ",
+      ssp_threshold,
+      "; shared loading + intercept pattern"
+    ),
     caption = heatmap_caption,
     x = NULL,
     y = NULL,
@@ -645,7 +706,10 @@ p_dif_heat <- ggplot(heat_df, aes(x = half, y = item_label, fill = status)) +
     plot.caption = element_text(hjust = 0, size = 11)
   )
 ggsave(
-  file.path(dif_selection_dir, paste0("dif_selection_heatmap_", run_tag, ".png")),
+  file.path(
+    dif_selection_dir,
+    paste0("dif_selection_heatmap_", run_tag, ".png")
+  ),
   p_dif_heat,
   width = 11,
   height = 6,
@@ -695,7 +759,14 @@ if (file.exists(rds_C)) {
   )
   print(
     fitC$summary(
-      variables = c("mu_logk", "b_mu_logk", "phi_logk", "mu_alpha", "b_mu_alpha", "phi_alpha")
+      variables = c(
+        "mu_logk",
+        "b_mu_logk",
+        "phi_logk",
+        "mu_alpha",
+        "b_mu_alpha",
+        "phi_alpha"
+      )
     ),
     digits = 3
   )
@@ -715,7 +786,14 @@ if (exists("fitC")) {
   covar_labels <- c("Hispanic", "White", "Black", "WtHR (baseline)")
 
   growth_summ <- fitC$summary(
-    variables = c("mu_logk", "phi_logk", "mu_alpha", "phi_alpha", "rho", "eti_sd")
+    variables = c(
+      "mu_logk",
+      "phi_logk",
+      "mu_alpha",
+      "phi_alpha",
+      "rho",
+      "eti_sd"
+    )
   )
   cat("\nGrowth parameters (Stage C, SSP):\n")
   print(
@@ -724,7 +802,10 @@ if (exists("fitC")) {
   )
   write.csv(
     growth_summ,
-    file.path(pubertal_estimates_dir, paste0("growth_params_", run_tag, ".csv")),
+    file.path(
+      pubertal_estimates_dir,
+      paste0("growth_params_", run_tag, ".csv")
+    ),
     row.names = FALSE
   )
 
@@ -741,13 +822,19 @@ if (exists("fitC")) {
     )
   write.csv(
     scores,
-    file.path(pubertal_estimates_dir, paste0("growth_factor_scores_", run_tag, ".csv")),
+    file.path(
+      pubertal_estimates_dir,
+      paste0("growth_factor_scores_", run_tag, ".csv")
+    ),
     row.names = FALSE
   )
   cat("\nGrowth factor scores written:", nrow(scores), "rows\n")
   cat(
-    "Inflection age (years) -- median:", round(median(scores$inflection_age), 2),
-    "| range:", round(range(scores$inflection_age), 2), "\n"
+    "Inflection age (years) -- median:",
+    round(median(scores$inflection_age), 2),
+    "| range:",
+    round(range(scores$inflection_age), 2),
+    "\n"
   )
 
   age_c_range <- range(prep$dat_long$age_c)
@@ -773,38 +860,68 @@ if (exists("fitC")) {
   ) +
     geom_line(alpha = 0.3, linewidth = 0.5) +
     scale_colour_manual(values = setNames(pal_chains, race_levels)) +
-    guides(colour = guide_legend(override.aes = list(alpha = 1, linewidth = 2.5))) +
+    guides(
+      colour = guide_legend(override.aes = list(alpha = 1, linewidth = 2.5))
+    ) +
     coord_cartesian(ylim = c(1, 5)) +
     labs(
-      title = paste0("Individual sigmoid puberty trajectories by race (SSP) - ", run_label),
-      subtitle = paste0("Predicted from growth factors (n = ", length(samp_idx), " sampled)"),
+      title = paste0(
+        "Individual sigmoid puberty trajectories by race (SSP) - ",
+        run_label
+      ),
+      subtitle = paste0(
+        "Predicted from growth factors (n = ",
+        length(samp_idx),
+        " sampled)"
+      ),
       x = "Age (years)",
       y = "Latent puberty (eta, 1-5 scale)",
       colour = "Race/ethnicity"
     ) +
     theme_minimal(base_size = 13)
   ggsave(
-    file.path(trajectories_dir, paste0("trajectories_by_race_", run_tag, ".png")),
+    file.path(
+      trajectories_dir,
+      paste0("trajectories_by_race_", run_tag, ".png")
+    ),
     p_spaghetti,
     width = 10,
     height = 6.5,
     dpi = 220
   )
 
-  mu_logk_draws <- as.vector(fitC$draws(variables = "mu_logk", format = "matrix"))
-  mu_alpha_draws <- as.vector(fitC$draws(variables = "mu_alpha", format = "matrix"))
+  mu_logk_draws <- as.vector(fitC$draws(
+    variables = "mu_logk",
+    format = "matrix"
+  ))
+  mu_alpha_draws <- as.vector(fitC$draws(
+    variables = "mu_alpha",
+    format = "matrix"
+  ))
   mean_traj <- map_dfr(age_grid, function(a) {
     vals <- 1 + 4 / (1 + exp(-exp(mu_logk_draws) * (a - mu_alpha_draws)))
-    tibble(age_c = a, eta_med = median(vals), eta_lo = quantile(vals, 0.05), eta_hi = quantile(vals, 0.95))
+    tibble(
+      age_c = a,
+      eta_med = median(vals),
+      eta_lo = quantile(vals, 0.05),
+      eta_hi = quantile(vals, 0.95)
+    )
   }) %>%
     mutate(age = age_c * prep$age_sd + prep$age_mean)
 
   p_meantraj <- ggplot(mean_traj, aes(x = age)) +
-    geom_ribbon(aes(ymin = eta_lo, ymax = eta_hi), fill = pal_primary_fill, alpha = 0.35) +
+    geom_ribbon(
+      aes(ymin = eta_lo, ymax = eta_hi),
+      fill = pal_primary_fill,
+      alpha = 0.35
+    ) +
     geom_line(aes(y = eta_med), colour = pal_primary, linewidth = 1.8) +
     coord_cartesian(ylim = c(1, 5)) +
     labs(
-      title = paste0("Mean sigmoid puberty growth trajectory (SSP) - ", run_label),
+      title = paste0(
+        "Mean sigmoid puberty growth trajectory (SSP) - ",
+        run_label
+      ),
       subtitle = "Posterior median + 90% CI; race averaged across groups, WtHR at sample mean",
       x = "Age (years)",
       y = "Latent puberty (eta, 1-5 scale)"
@@ -823,29 +940,79 @@ if (exists("fitC")) {
   c_logk <- fitC$summary(variables = "b_mu_logk")
   c_alpha <- fitC$summary(variables = "b_mu_alpha")
   cmp <- bind_rows(
-    tibble(covariate = covar_labels, growth_param = "Log-rate (pubertal tempo)", mean = a_logk$mean, q5 = a_logk$q5, q95 = a_logk$q95, stage = "A: Impact only"),
-    tibble(covariate = covar_labels, growth_param = "Inflection age (pubertal timing)", mean = a_alpha$mean, q5 = a_alpha$q5, q95 = a_alpha$q95, stage = "A: Impact only"),
-    tibble(covariate = covar_labels, growth_param = "Log-rate (pubertal tempo)", mean = c_logk$mean, q5 = c_logk$q5, q95 = c_logk$q95, stage = "C: Impact + DIF"),
-    tibble(covariate = covar_labels, growth_param = "Inflection age (pubertal timing)", mean = c_alpha$mean, q5 = c_alpha$q5, q95 = c_alpha$q95, stage = "C: Impact + DIF")
+    tibble(
+      covariate = covar_labels,
+      growth_param = "Log-rate (pubertal tempo)",
+      mean = a_logk$mean,
+      q5 = a_logk$q5,
+      q95 = a_logk$q95,
+      stage = "A: Impact only"
+    ),
+    tibble(
+      covariate = covar_labels,
+      growth_param = "Inflection age (pubertal timing)",
+      mean = a_alpha$mean,
+      q5 = a_alpha$q5,
+      q95 = a_alpha$q95,
+      stage = "A: Impact only"
+    ),
+    tibble(
+      covariate = covar_labels,
+      growth_param = "Log-rate (pubertal tempo)",
+      mean = c_logk$mean,
+      q5 = c_logk$q5,
+      q95 = c_logk$q95,
+      stage = "C: Impact + DIF"
+    ),
+    tibble(
+      covariate = covar_labels,
+      growth_param = "Inflection age (pubertal timing)",
+      mean = c_alpha$mean,
+      q5 = c_alpha$q5,
+      q95 = c_alpha$q95,
+      stage = "C: Impact + DIF"
+    )
   ) %>%
     mutate(covariate = factor(covariate, levels = rev(covar_labels)))
 
-  p_cmp <- ggplot(cmp, aes(x = mean, y = covariate, colour = stage, shape = stage)) +
+  p_cmp <- ggplot(
+    cmp,
+    aes(x = mean, y = covariate, colour = stage, shape = stage)
+  ) +
     geom_vline(xintercept = 0, linetype = "dashed", colour = "grey60") +
-    geom_pointrange(aes(xmin = q5, xmax = q95), position = position_dodge(width = 0.5), size = 0.5) +
+    geom_pointrange(
+      aes(xmin = q5, xmax = q95),
+      position = position_dodge(width = 0.5),
+      size = 0.5
+    ) +
     facet_wrap(~growth_param) +
-    scale_colour_manual(values = c("A: Impact only" = pal_two[2], "C: Impact + DIF" = pal_two[1])) +
-    scale_shape_manual(values = c("A: Impact only" = pal_shapes_two[2], "C: Impact + DIF" = pal_shapes_two[1])) +
+    scale_colour_manual(
+      values = c("A: Impact only" = pal_two[2], "C: Impact + DIF" = pal_two[1])
+    ) +
+    scale_shape_manual(
+      values = c(
+        "A: Impact only" = pal_shapes_two[2],
+        "C: Impact + DIF" = pal_shapes_two[1]
+      )
+    ) +
     labs(
-      title = paste0("Growth-curve impact, before vs after separating DIF (SSP) - ", run_label),
+      title = paste0(
+        "Growth-curve impact, before vs after separating DIF (SSP) - ",
+        run_label
+      ),
       subtitle = "Effect-coded deviations from grand mean (race); WtHR is a 1-SD effect; posterior mean + 90% CI",
       x = "Effect on growth-curve parameter",
-      y = NULL, colour = NULL, shape = NULL
+      y = NULL,
+      colour = NULL,
+      shape = NULL
     ) +
     theme_minimal(base_size = 13) +
     theme(legend.position = "bottom")
   ggsave(
-    file.path(impact_comparisons_dir, paste0("impact_comparison_A_vs_C_", run_tag, ".png")),
+    file.path(
+      impact_comparisons_dir,
+      paste0("impact_comparison_A_vs_C_", run_tag, ".png")
+    ),
     p_cmp,
     width = 11,
     height = 6.5,
@@ -859,10 +1026,19 @@ if (exists("fitC")) {
   for (k in seq_len(kimp)) {
     logk_col <- b_mu_logk_draws[, paste0("b_mu_logk[", k, "]")]
     alpha_col <- b_mu_alpha_draws[, paste0("b_mu_alpha[", k, "]")]
-    logk_sig <- unname(quantile(logk_col, 0.05) > 0 || quantile(logk_col, 0.95) < 0)
-    alpha_sig <- unname(quantile(alpha_col, 0.05) > 0 || quantile(alpha_col, 0.95) < 0)
+    logk_sig <- unname(
+      quantile(logk_col, 0.05) > 0 || quantile(logk_col, 0.95) < 0
+    )
+    alpha_sig <- unname(
+      quantile(alpha_col, 0.05) > 0 || quantile(alpha_col, 0.95) < 0
+    )
     if (!logk_sig && !alpha_sig) {
-      cat("\nNo significant impact effect for '", covar_labels[k], "' -- skipping trajectory illustration.\n", sep = "")
+      cat(
+        "\nNo significant impact effect for '",
+        covar_labels[k],
+        "' -- skipping trajectory illustration.\n",
+        sep = ""
+      )
       next
     }
     any_impact_sig <- TRUE
@@ -896,9 +1072,15 @@ if (exists("fitC")) {
       }) %>%
         mutate(level = lvl_name)
     }) %>%
-      mutate(age = age_c * prep$age_sd + prep$age_mean, level = factor(level, levels = names(level_vals)))
+      mutate(
+        age = age_c * prep$age_sd + prep$age_mean,
+        level = factor(level, levels = names(level_vals))
+      )
 
-    p_impact <- ggplot(traj_by_level, aes(x = age, y = eta_med, colour = level, linetype = level)) +
+    p_impact <- ggplot(
+      traj_by_level,
+      aes(x = age, y = eta_med, colour = level, linetype = level)
+    ) +
       geom_line(linewidth = 1.8) +
       scale_colour_manual(values = setNames(pal_use, names(level_vals))) +
       scale_linetype_manual(values = setNames(lty_use, names(level_vals))) +
@@ -908,7 +1090,12 @@ if (exists("fitC")) {
       ) +
       coord_cartesian(ylim = c(1, 5)) +
       labs(
-        title = paste0("Sigmoid growth trajectory by ", covar_labels[k], " (SSP) - ", run_label),
+        title = paste0(
+          "Sigmoid growth trajectory by ",
+          covar_labels[k],
+          " (SSP) - ",
+          run_label
+        ),
         subtitle = paste0(sig_label, ". Other covariates at reference."),
         x = "Age (years)",
         y = "Latent puberty (eta, 1-5 scale)",
@@ -918,20 +1105,30 @@ if (exists("fitC")) {
       theme_minimal(base_size = 13)
     covar_tag <- gsub("[^A-Za-z0-9]+", "", covar_labels[k])
     ggsave(
-      file.path(trajectories_dir, paste0("impact_illustration_", covar_tag, "_", run_tag, ".png")),
+      file.path(
+        trajectories_dir,
+        paste0("impact_illustration_", covar_tag, "_", run_tag, ".png")
+      ),
       p_impact,
       width = 12,
       height = 6.5,
       dpi = 220
     )
     cat(
-      "\nImpact illustration for '", covar_labels[k], "': log-rate significant=", logk_sig,
-      ", inflection-age significant=", alpha_sig, "\n",
+      "\nImpact illustration for '",
+      covar_labels[k],
+      "': log-rate significant=",
+      logk_sig,
+      ", inflection-age significant=",
+      alpha_sig,
+      "\n",
       sep = ""
     )
   }
   if (!any_impact_sig) {
-    cat("\nNo significant impact terms for any covariate -- skipping all impact trajectory illustrations.\n")
+    cat(
+      "\nNo significant impact terms for any covariate -- skipping all impact trajectory illustrations.\n"
+    )
   }
 
   l_dif_summ_all <- fitC$summary(variables = "l_dif")
@@ -946,7 +1143,9 @@ if (exists("fitC")) {
     arr.ind = TRUE
   )
   if (nrow(retained_cells) == 0) {
-    cat("\nNo DIF terms retained for any item/covariate -- skipping all DIF illustration plots.\n")
+    cat(
+      "\nNo DIF terms retained for any item/covariate -- skipping all DIF illustration plots.\n"
+    )
   }
   for (row_i in seq_len(nrow(retained_cells))) {
     it_idx <- retained_cells[row_i, 1]
@@ -977,18 +1176,33 @@ if (exists("fitC")) {
       function(x_val) {
         nu <- np_mean + n_dif_val * x_val
         lam <- lp_mean * exp(l_dif_val * x_val)
-        tibble(eta = eta_grid_true, prob = plogis(nu + lam * (eta_grid_true - 3) - tau1))
+        tibble(
+          eta = eta_grid_true,
+          prob = plogis(nu + lam * (eta_grid_true - 3) - tau1)
+        )
       },
       .id = "level"
     )
     curve_df$level <- factor(curve_df$level, levels = names(level_vals))
 
-    p_dif <- ggplot(curve_df, aes(x = eta, y = prob, colour = level, linetype = level)) +
+    p_dif <- ggplot(
+      curve_df,
+      aes(x = eta, y = prob, colour = level, linetype = level)
+    ) +
       geom_line(linewidth = 1.1) +
       scale_colour_manual(values = setNames(pal_use, levels(curve_df$level))) +
-      scale_linetype_manual(values = setNames(lty_use, levels(curve_df$level))) +
+      scale_linetype_manual(
+        values = setNames(lty_use, levels(curve_df$level))
+      ) +
       labs(
-        title = paste0("Item characteristic curve for '", target_item, "' by ", target_covar, " (SSP) - ", run_label),
+        title = paste0(
+          "Item characteristic curve for '",
+          target_item,
+          "' by ",
+          target_covar,
+          " (SSP) - ",
+          run_label
+        ),
         subtitle = "P(response above lowest category) vs. latent puberty (1-5 scale); other DIF covariates held at reference",
         x = "Latent puberty (eta, 1-5 scale)",
         y = "P(response > lowest category)",
@@ -999,7 +1213,15 @@ if (exists("fitC")) {
     ggsave(
       file.path(
         dif_illustrations_dir,
-        paste0("dif_illustration_", target_item, "_", target_covar, "_", run_tag, ".png")
+        paste0(
+          "dif_illustration_",
+          target_item,
+          "_",
+          target_covar,
+          "_",
+          run_tag,
+          ".png"
+        )
       ),
       p_dif,
       width = 10,
@@ -1007,8 +1229,15 @@ if (exists("fitC")) {
       dpi = 220
     )
     cat(
-      "\nDIF illustration for '", target_covar, "': item '", target_item,
-      "' | loading DIF:", round(l_dif_val, 3), "| intercept DIF:", round(n_dif_val, 3), "\n"
+      "\nDIF illustration for '",
+      target_covar,
+      "': item '",
+      target_item,
+      "' | loading DIF:",
+      round(l_dif_val, 3),
+      "| intercept DIF:",
+      round(n_dif_val, 3),
+      "\n"
     )
   }
 
