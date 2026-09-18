@@ -56,7 +56,7 @@ data_dir <- Sys.getenv("DATA_DIR")
 if (!nzchar(data_dir) || !dir.exists(data_dir)) {
   data_dir <- file.path(
     root_path,
-    "projects/abcd-projs/dissertation/study1/data"
+    "projects/abcd-projs/dissertation/lmnlfa-puberty/data"
   )
 }
 if (!dir.exists(data_dir)) {
@@ -67,7 +67,7 @@ out_base <- Sys.getenv("OUT_DIR")
 if (!nzchar(out_base)) {
   out_base <- file.path(
     root_path,
-    "projects/abcd-projs/dissertation/study1/outputs"
+    "projects/abcd-projs/dissertation/lmnlfa-puberty/outputs"
   )
 }
 out_dir <- file.path(out_base, "gmm_trajectories")

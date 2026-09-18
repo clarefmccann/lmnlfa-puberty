@@ -20,10 +20,10 @@ suppressPackageStartupMessages({
   library(kableExtra)
 })
 
-sshfs_default <- "/private/tmp/sshfs/projects/abcd-projs/dissertation/study1/outputs"
+sshfs_default <- "/private/tmp/sshfs/projects/abcd-projs/dissertation/lmnlfa-puberty/outputs"
 out_base <- Sys.getenv("OUT_DIR")
 if (!nzchar(out_base) || !dir.exists(out_base)) {
-  out_base <- if (dir.exists(sshfs_default)) sshfs_default else file.path(Sys.getenv("HOME"), "projects/abcd-projs/dissertation/study1/outputs")
+  out_base <- if (dir.exists(sshfs_default)) sshfs_default else file.path(Sys.getenv("HOME"), "projects/abcd-projs/dissertation/lmnlfa-puberty/outputs")
 }
 model_dir <- file.path(out_base, "lmnlfa_growth_sigmoid_staged")
 premeeting_dir <- file.path(model_dir, "premeeting")

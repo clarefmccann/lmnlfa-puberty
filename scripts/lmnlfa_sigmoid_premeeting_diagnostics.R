@@ -68,8 +68,8 @@ cat("Sex:", sx, "\n")
 # stale Box mirror on this machine); DATA_DIR/OUT_DIR env vars (set on HPC)
 # always take precedence when present.
 # ---------------------------------------------------------------------------
-sshfs_data_default <- "/private/tmp/sshfs/projects/abcd-projs/dissertation/study1/data"
-sshfs_out_default <- "/private/tmp/sshfs/projects/abcd-projs/dissertation/study1/outputs"
+sshfs_data_default <- "/private/tmp/sshfs/projects/abcd-projs/dissertation/lmnlfa-puberty/data"
+sshfs_out_default <- "/private/tmp/sshfs/projects/abcd-projs/dissertation/lmnlfa-puberty/outputs"
 
 data_dir <- Sys.getenv("DATA_DIR")
 if (!nzchar(data_dir) || !dir.exists(data_dir)) {
@@ -78,7 +78,7 @@ if (!nzchar(data_dir) || !dir.exists(data_dir)) {
   } else {
     root_path <- Sys.getenv("HOME_DIR")
     if (!nzchar(root_path)) root_path <- Sys.getenv("HOME")
-    data_dir <- file.path(root_path, "projects/abcd-projs/dissertation/study1/data")
+    data_dir <- file.path(root_path, "projects/abcd-projs/dissertation/lmnlfa-puberty/data")
   }
 }
 if (!dir.exists(data_dir)) stop("Cannot locate data directory: ", data_dir)
@@ -90,7 +90,7 @@ if (!nzchar(out_base) || !dir.exists(out_base)) {
   } else {
     root_path <- Sys.getenv("HOME_DIR")
     if (!nzchar(root_path)) root_path <- Sys.getenv("HOME")
-    out_base <- file.path(root_path, "projects/abcd-projs/dissertation/study1/outputs")
+    out_base <- file.path(root_path, "projects/abcd-projs/dissertation/lmnlfa-puberty/outputs")
   }
 }
 

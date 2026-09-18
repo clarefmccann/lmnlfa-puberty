@@ -4,7 +4,7 @@
 ## long-format datasets for each sex × reporter combination.
 
 # export DATA_DIR="/u/project/silvers/data/ABCD/ABCD-release-6.0/cfm/physical-health/puberty"
-# export OUT_DIR="/u/home/c/clarefmc/projects/abcd-projs/dissertation/study1/data"
+# export OUT_DIR="/u/home/c/clarefmc/projects/abcd-projs/dissertation/lmnlfa-puberty/data"
 # Rscript 01_data_foundation.R
 
 library(dplyr)
@@ -31,7 +31,7 @@ if (!dir.exists(data_root)) {
 
 out_root <- file.path(
   root_path,
-  "projects/abcd-projs/dissertation/study1/data"
+  "projects/abcd-projs/dissertation/lmnlfa-puberty/data"
 )
 dir.create(out_root, showWarnings = FALSE, recursive = TRUE)
 
@@ -149,7 +149,7 @@ dk_overall <- dk_long %>%
 
 out_root_dk <- file.path(
   root_path,
-  "projects/abcd-projs/dissertation/study1/outputs/data_quality"
+  "projects/abcd-projs/dissertation/lmnlfa-puberty/outputs/data_quality"
 )
 dir.create(out_root_dk, showWarnings = FALSE, recursive = TRUE)
 write.csv(

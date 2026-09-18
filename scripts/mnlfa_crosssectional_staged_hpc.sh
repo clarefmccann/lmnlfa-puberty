@@ -52,8 +52,8 @@ echo "============================================"
 module load R/4.2.2
 module load gcc/10.2.0
 
-export DATA_DIR="/u/home/c/clarefmc/projects/abcd-projs/dissertation/study1/data"
-export OUT_DIR="/u/home/c/clarefmc/projects/abcd-projs/dissertation/study1/outputs"
+export DATA_DIR="/u/home/c/clarefmc/projects/abcd-projs/dissertation/lmnlfa-puberty/data"
+export OUT_DIR="/u/home/c/clarefmc/projects/abcd-projs/dissertation/lmnlfa-puberty/outputs"
 
 # Path to the CmdStan installation created by cmdstanr::install_cmdstan()
 export CMDSTAN="${HOME}/.cmdstan/cmdstan-2.38.0"

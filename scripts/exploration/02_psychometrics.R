@@ -9,7 +9,7 @@
 ## Requires outputs from 00_data_foundation.R.
 
 # export DATA_DIR="/u/project/silvers/data/ABCD/ABCD-release-6.0/cfm/physical-health/puberty"
-# export OUT_DIR="/u/home/c/clarefmc/projects/abcd-projs/dissertation/study1/outputs"
+# export OUT_DIR="/u/home/c/clarefmc/projects/abcd-projs/dissertation/lmnlfa-puberty/outputs"
 # Rscript 02_psychometrics.R
 
 pacman::p_load(
@@ -54,7 +54,7 @@ if (!nzchar(data_dir) || !dir.exists(data_dir)) {
   data_dir <- file.path(
     root_path,
     "projects/abcd-projs",
-    "dissertation/study1/outputs"
+    "dissertation/lmnlfa-puberty/outputs"
   )
 }
 if (!dir.exists(data_dir)) {
@@ -67,7 +67,7 @@ if (!nzchar(out_base)) {
   out_base <- file.path(
     root_path,
     "projects/abcd-projs",
-    "dissertation/study1/outputs"
+    "dissertation/lmnlfa-puberty/outputs"
   )
 }
 out_dir <- file.path(out_base, "psychometrics")

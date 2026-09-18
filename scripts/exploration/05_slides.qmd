@@ -24,7 +24,7 @@ library(ggplot2)
 library(knitr)
 
 # export DATA_DIR="/u/project/silvers/data/ABCD/ABCD-release-6.0/cfm/physical-health/puberty"
-# export OUT_DIR="/u/home/c/clarefmc/projects/abcd-projs/dissertation/study1/outputs"
+# export OUT_DIR="/u/home/c/clarefmc/projects/abcd-projs/dissertation/lmnlfa-puberty/outputs"
 # quarto render 05_slides.qmd
 
 out_base <- Sys.getenv("OUT_DIR")

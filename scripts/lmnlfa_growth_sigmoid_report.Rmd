@@ -27,14 +27,14 @@ suppressPackageStartupMessages({
 # itself first if you want updated numbers; then re-knit this report.
 
 data_dir <- Sys.getenv("DATA_DIR")
-sshfs_data_dir <- "/private/tmp/sshfs/projects/abcd-projs/dissertation/study1/outputs"
+sshfs_data_dir <- "/private/tmp/sshfs/projects/abcd-projs/dissertation/lmnlfa-puberty/outputs"
 if (!nzchar(data_dir) || !dir.exists(data_dir)) {
   if (dir.exists(sshfs_data_dir)) {
     data_dir <- sshfs_data_dir
   } else {
     root_path <- Sys.getenv("HOME_DIR")
     if (!nzchar(root_path)) root_path <- Sys.getenv("HOME")
-    data_dir <- file.path(root_path, "projects/abcd-projs/dissertation/study1/outputs")
+    data_dir <- file.path(root_path, "projects/abcd-projs/dissertation/lmnlfa-puberty/outputs")
   }
 }
 
